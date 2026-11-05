@@ -25,3 +25,33 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run coverage
+  self-test:
+    # Runs the built action from this repository against a mocked pull_request event: STOP + dry-run holds with no API call.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Run dist/index.js on a mocked event
+        env:
+          GITHUB_EVENT_NAME: pull_request
+          GITHUB_REPOSITORY: example/repo
+          INPUT_WORKFLOW: ci.yml
+          INPUT_MODE: stop
+          INPUT_ENABLED-MODES: FULL_AHEAD,HALF_AHEAD,SLOW_AHEAD,DEAD_SLOW,STANDBY,STOP
+          INPUT_DEDUPE: 'true'
+          INPUT_DRY-RUN: 'true'
+          INPUT_TOKEN: unused-no-api-call-is-made
+        run: |
+          event="$RUNNER_TEMP/event.json"
+          printf '%s' '{"pull_request":{"number":7,"state":"open","draft":false,"labels":[],"head":{"ref":"feat","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/repo"}},"base":{"repo":{"full_name":"example/repo"}}}}' > "$event"
+          export GITHUB_EVENT_PATH="$event" GITHUB_OUTPUT="$RUNNER_TEMP/out.txt" GITHUB_STEP_SUMMARY="$RUNNER_TEMP/summary.md"
+          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
+          node dist/index.js
+          grep -qx 'decision=hold' "$GITHUB_OUTPUT"
+          grep -qx 'mode=STOP' "$GITHUB_OUTPUT"
