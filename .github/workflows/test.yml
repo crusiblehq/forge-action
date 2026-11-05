@@ -37,21 +37,25 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
-      - name: Run dist/index.js on a mocked event
+      - name: Write a mocked pull_request event
+        run: |
+          printf '%s' '{"pull_request":{"number":7,"state":"open","draft":false,"labels":[],"head":{"ref":"feat","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/repo"}},"base":{"repo":{"full_name":"example/repo"}}}}' > "$RUNNER_TEMP/event.json"
+      - name: Run the action with uses ./ on the mocked event
+        id: forge
+        uses: ./
         env:
           GITHUB_EVENT_NAME: pull_request
+          GITHUB_EVENT_PATH: ${{ runner.temp }}/event.json
           GITHUB_REPOSITORY: example/repo
-          INPUT_WORKFLOW: ci.yml
-          INPUT_MODE: stop
-          INPUT_ENABLED-MODES: FULL_AHEAD,HALF_AHEAD,SLOW_AHEAD,DEAD_SLOW,STANDBY,STOP
-          INPUT_DEDUPE: 'true'
-          INPUT_DRY-RUN: 'true'
-          INPUT_TOKEN: unused-no-api-call-is-made
+        with:
+          workflow: ci.yml
+          mode: stop
+          dry-run: 'true'
+          token: unused-no-api-call-is-made
+      - name: Assert the outputs, defaults included
+        env:
+          DECISION: ${{ steps.forge.outputs.decision }}
+          MODE: ${{ steps.forge.outputs.mode }}
         run: |
-          event="$RUNNER_TEMP/event.json"
-          printf '%s' '{"pull_request":{"number":7,"state":"open","draft":false,"labels":[],"head":{"ref":"feat","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/repo"}},"base":{"repo":{"full_name":"example/repo"}}}}' > "$event"
-          export GITHUB_EVENT_PATH="$event" GITHUB_OUTPUT="$RUNNER_TEMP/out.txt" GITHUB_STEP_SUMMARY="$RUNNER_TEMP/summary.md"
-          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
-          node dist/index.js
-          grep -qx 'decision=hold' "$GITHUB_OUTPUT"
-          grep -qx 'mode=STOP' "$GITHUB_OUTPUT"
+          test "$DECISION" = hold
+          test "$MODE" = STOP

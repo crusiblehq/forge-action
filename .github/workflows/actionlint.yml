@@ -1,10 +1,8 @@
 name: actionlint
 on:
   pull_request:
-    paths: ['.github/**']
   push:
     branches: [main]
-    paths: ['.github/**']
 permissions:
   contents: read
 jobs:
@@ -16,7 +14,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Run actionlint
+        env:
+          VERSION: 1.7.7
+          SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
         run: |
-          # Script pinned to the commit of v1.7.7; it downloads that release's binary.
-          curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/03d0035246f3e81f36aed592ffb4bebf33a03106/scripts/download-actionlint.bash | bash -s -- 1.7.7
-          ./actionlint -color
+          # Release asset verified against a pinned SHA-256 (actionlint_1.7.7_checksums.txt, linux_amd64).
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          echo "${SHA256}  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
