@@ -159,6 +159,15 @@ gh attestation verify dist/index.js --repo crusiblehq/forge-action
 
 Releases are immutable and carry build provenance. `v1` follows the latest `1.x.y`.
 
+### Releasing
+
+1. Set `version` in `package.json` to `X.Y.Z` and merge to `main`.
+2. Create the release `vX.Y.Z` on a `main` commit. Prereleases are skipped.
+3. Approve the run in the `release` environment.
+4. `release.yml` rebuilds and verifies `dist/`, attests it, publishes `@crusiblehq/forge-action` to npm by trusted publishing (OIDC, with provenance, no stored token), and moves `v1`.
+
+The first OIDC publish validates the npm trusted publisher, which is pending validation. It MUST happen before 2026-11-07 01:27 UTC.
+
 ## Development
 
 `npm run all` formats, lints, typechecks, tests with coverage and rebuilds `dist/`. `dist/` is committed and the `check-dist` workflow fails when it is stale. See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/BEST-PRACTICES.md](docs/BEST-PRACTICES.md).
