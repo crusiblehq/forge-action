@@ -34435,9 +34435,10 @@ class PolicyError extends Error {
 }
 const isMode = (v) => MODES.includes(v);
 const LEGACY = { GREEN: 'FULL_AHEAD', YELLOW: 'SLOW_AHEAD' };
-/** Unset/empty = FULL_AHEAD. Legacy GREEN/YELLOW map with a warning. Unknown = SLOW_AHEAD with a warning. */
+/** Case-insensitive. Unset/empty = FULL_AHEAD. Legacy GREEN/YELLOW map with a warning. Unknown = SLOW_AHEAD with a warning. */
 function parseMode(raw) {
-    const v = (raw ?? '').trim();
+    const given = (raw ?? '').trim();
+    const v = given.toUpperCase();
     if (v === '')
         return { mode: 'FULL_AHEAD', warnings: [] };
     if (isMode(v))
@@ -34445,16 +34446,16 @@ function parseMode(raw) {
     const legacy = LEGACY[v];
     if (legacy)
         return { mode: legacy, warnings: [`legacy-mode-${v}`] };
-    return { mode: 'SLOW_AHEAD', warnings: [`mode-value: "${v}" is not a mode, using SLOW_AHEAD`] };
+    return { mode: 'SLOW_AHEAD', warnings: [`mode-value: "${given}" is not a mode, using SLOW_AHEAD`] };
 }
-/** Comma list of modes. Empty = all six. An unknown token or a list that parses to nothing is an error. */
+/** Comma list of modes, case-insensitive. An empty list or an unknown token is an error (the action default names all six). */
 function parseEnabledModes(raw) {
     const parts = (raw ?? '')
         .split(',')
-        .map((s) => s.trim())
+        .map((s) => s.trim().toUpperCase())
         .filter(Boolean);
     if (parts.length === 0)
-        return [...MODES];
+        throw new PolicyError('enabled-modes: the list is empty; name at least one mode');
     const bad = parts.filter((p) => !isMode(p));
     if (bad.length > 0)
         throw new PolicyError(`enabled-modes: unknown mode ${bad.map((b) => `"${b}"`).join(', ')}`);
@@ -34473,14 +34474,20 @@ function resolveMode(raw, enabled) {
     return { mode: used, warnings: [...parsed.warnings, `mode-not-enabled: ${parsed.mode} -> ${used}`] };
 }
 
+// Pure. `,` separates entries (OR); `+` joins labels inside an entry (AND). Exact, case-sensitive.
+/** A malformed entry (`a+`, `a++b`, `+a`) throws: it would otherwise broaden a rule on a security knob. */
 function parseBypassLabels(raw) {
-    return (raw ?? '')
-        .split(',')
-        .map((entry) => entry
-        .split('+')
-        .map((l) => l.trim())
-        .filter(Boolean))
-        .filter((all) => all.length > 0);
+    const rules = [];
+    for (const entry of (raw ?? '').split(',')) {
+        if (entry.trim() === '')
+            continue;
+        const parts = entry.split('+').map((l) => l.trim());
+        if (parts.some((l) => l === '')) {
+            throw new PolicyError(`bypass-labels: malformed entry "${entry.trim()}" (empty label around "+")`);
+        }
+        rules.push(parts);
+    }
+    return rules;
 }
 /** The first entry whose labels are all present, as written, or null. */
 function bypassMatch(labels, rules) {
@@ -34567,11 +34574,31 @@ function decide(i) {
 }
 
 const labelNames = (labels) => labels.map((l) => (typeof l === 'string' ? l : (l.name ?? ''))).filter(Boolean);
-/** ONE search call: open, non-draft PRs carrying `label`, oldest first (first 100). */
+const READY_QUERY = `query($owner: String!, $repo: String!, $label: String!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequests(states: OPEN, labels: [$label], first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC}) {
+      nodes { number isDraft labels(first: 50) { nodes { name } } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+const MAX_PAGES = 5;
+/** Open, non-draft PRs carrying `label` (SPEC 3.2.3), read from GraphQL, which is not an index: no search lag. Paged. */
 async function listReady(gh, r, label) {
-    const q = `repo:${r.owner}/${r.repo} is:pr is:open draft:false label:"${label.replace(/"/g, '\\"')}"`;
-    const { data } = await gh.rest.search.issuesAndPullRequests({ q, per_page: 100, sort: 'created', order: 'asc' });
-    return { prs: data.items.map((i) => ({ number: i.number, labels: labelNames(i.labels) })), total: data.total_count };
+    const out = [];
+    let after = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+        const data = await gh.graphql(READY_QUERY, { owner: r.owner, repo: r.repo, label, after });
+        const prs = data.repository.pullRequests;
+        for (const n of prs.nodes) {
+            if (!n.isDraft)
+                out.push({ number: n.number, labels: n.labels.nodes.map((l) => l.name) });
+        }
+        if (!prs.pageInfo.hasNextPage)
+            return out.sort((a, b) => a.number - b.number);
+        after = prs.pageInfo.endCursor;
+    }
+    throw new Error(`more than ${MAX_PAGES * 100} open pull requests carry "${label}"`);
 }
 /** True when a dispatched run for this head SHA is queued, running or green. */
 async function hasRunForSha(gh, r, workflow, sha) {
@@ -34580,8 +34607,17 @@ async function hasRunForSha(gh, r, workflow, sha) {
 }
 /** A dispatch takes a ref, not a SHA: refuse when the branch moved past the SHA this event saw. */
 async function branchTip(gh, r, branch) {
-    const { data } = await gh.rest.git.getRef({ ...r, ref: `heads/${branch}` });
-    return data.object.sha;
+    try {
+        const { data } = await gh.rest.git.getRef({ ...r, ref: `heads/${branch}` });
+        return data.object.sha;
+    }
+    catch (err) {
+        const s = httpStatus(err);
+        if (s === 403 || s === 404) {
+            throw new PolicyError(`branch read refused (HTTP ${s}): grant the job "contents: read" in permissions`);
+        }
+        throw err;
+    }
 }
 const dispatch = (gh, r, workflow, ref, inputs) => gh.rest.actions.createWorkflowDispatch({ ...r, workflow_id: workflow, ref, inputs });
 const addLabel = (gh, r, n, label) => gh.rest.issues.addLabels({ ...r, issue_number: n, labels: [label] });
@@ -34595,19 +34631,41 @@ async function removeLabel(gh, r, n, label) {
     }
 }
 const httpStatus = (err) => err?.status;
+/** A rate limit (primary or secondary), as opposed to a refusal: retry it, never fail the step on it. */
+function isRateLimit(err) {
+    const e = err;
+    if (!e)
+        return false;
+    if (e.errors?.some((x) => x.type === 'RATE_LIMITED'))
+        return true;
+    if (e.status === 429)
+        return true;
+    if (e.status !== 403)
+        return false;
+    const h = e.response?.headers ?? {};
+    return (String(h['x-ratelimit-remaining']) === '0' || h['retry-after'] !== undefined || /rate limit/i.test(e.message ?? ''));
+}
+/** A permission or scope refusal: GraphQL reports it as errors[].type on a 200, REST as 401/403/404/422. */
+function isPermissionError(err) {
+    const e = err;
+    if (e?.errors?.some((x) => x.type === 'FORBIDDEN' || x.type === 'INSUFFICIENT_SCOPES'))
+        return true;
+    const s = httpStatus(err);
+    return s === 401 || s === 403 || s === 404 || s === 422;
+}
 
 // Orchestration: inputs + event payload + Gh in, decision out. No Actions-runtime imports, so tests drive it directly.
 const RETRY_MS = [1000, 3000];
-/** Read the count, retrying twice on a transient error; a 403/401/404 is a config error and fails loudly at once. */
+/** Read the count, retrying twice on a transient error or rate limit; a permission refusal fails loudly at once. */
 async function readCount(d, label) {
     for (let attempt = 0;; attempt++) {
         try {
             return await listReady(d.gh, d.repo, label);
         }
         catch (err) {
-            const s = httpStatus(err);
-            if (s === 401 || s === 403 || s === 404) {
-                throw new PolicyError(`cap count refused (HTTP ${s}): grant the job "pull-requests: read" (and "actions: write") in permissions`);
+            if (!isRateLimit(err) && isPermissionError(err)) {
+                const s = err.status;
+                throw new PolicyError(`cap count refused${s ? ` (HTTP ${s})` : ''}: grant the job "pull-requests: read" (and "actions: write", "contents: read") in permissions`);
             }
             const wait = RETRY_MS[attempt];
             if (wait === undefined)
@@ -34627,7 +34685,7 @@ async function run(d) {
     const caps = parseLimitByLabel(i.limitByLabel);
     const failfastModes = i.failfastModes
         .split(',')
-        .map((s) => s.trim())
+        .map((s) => s.trim().toUpperCase())
         .filter(Boolean);
     const badFf = failfastModes.filter((m) => !isMode(m));
     if (badFf.length > 0)
@@ -34688,20 +34746,15 @@ async function run(d) {
         out.decision = 'skip';
         out.reason = `${i.workflow} already has a run for ${pr.head.sha.slice(0, 7)}`;
     }
-    // Caps: privileged PRs sit outside them. One search per bucket; any bucket full holds.
+    // Caps: privileged PRs sit outside them. One GraphQL read per bucket; any bucket full holds.
     const plan = out.decision === 'dispatch' && !privileged ? capPlan(caps, labels, mode) : null;
     if (plan) {
         for (const bucket of plan.buckets) {
             let verdict;
             try {
-                const { prs, total } = await readCount(d, bucket);
+                const prs = await readCount(d, bucket);
                 const others = prs.filter((p) => p.number !== pr.number && bypassMatch(p.labels, rules) === null);
-                // `total` > 100 with self absent: rank is at least 101, well past any cap, so the PR is held.
-                const a = admit(others.map((p) => p.number), pr.number, plan.cap);
-                verdict =
-                    total > prs.length && !prs.some((p) => p.number === pr.number)
-                        ? { ...a, admitted: false, rank: Math.max(a.rank, prs.length + 1) }
-                        : a;
+                verdict = admit(others.map((p) => p.number), pr.number, plan.cap);
             }
             catch (err) {
                 if (err instanceof PolicyError)
@@ -34726,7 +34779,8 @@ async function run(d) {
         }
     }
     if (out.decision === 'dispatch') {
-        const tip = await branchTip(d.gh, d.repo, i.ref || pr.head.ref);
+        // The moved-head check is on the PR's own head branch; `ref` is only the dispatch target.
+        const tip = await branchTip(d.gh, d.repo, pr.head.ref);
         if (tip !== pr.head.sha) {
             out.decision = 'skip';
             out.reason = `branch moved to ${tip.slice(0, 7)} after ${pr.head.sha.slice(0, 7)}; the newer push dispatches its own run`;
@@ -34808,7 +34862,7 @@ async function main() {
     setOutput('reason', r.reason);
     setOutput('mode', r.mode);
     setOutput('bucket', r.bucket);
-    setOutput('count', r.count);
+    setOutput('ready-count', r.count);
     setOutput('cap', r.cap < 0 ? '' : r.cap);
     setOutput('privileged', r.privileged);
     setOutput('dispatched', r.dispatched);
