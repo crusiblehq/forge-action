@@ -34,11 +34,12 @@ describe('parseMode', () => {
 })
 
 describe('parseEnabledModes', () => {
-  it('defaults to all six', () => expect(parseEnabledModes('')).toEqual([...MODES]))
+  it('rejects an empty list', () => expect(() => parseEnabledModes('')).toThrow(PolicyError))
+  it('is case-insensitive', () => expect(parseEnabledModes('stop,full_ahead')).toEqual(['FULL_AHEAD', 'STOP']))
   it('keeps ladder order and trims', () =>
     expect(parseEnabledModes(' STOP , FULL_AHEAD')).toEqual(['FULL_AHEAD', 'STOP']))
   it('rejects an unknown token', () => expect(() => parseEnabledModes('FULL_AHEAD,FAST')).toThrow(PolicyError))
-  it('rejects a list of only separators as empty-means-all', () => expect(parseEnabledModes(' , ')).toEqual([...MODES]))
+  it('rejects a list of only separators', () => expect(() => parseEnabledModes(' , ')).toThrow(PolicyError))
 })
 
 describe('resolveMode fail-safe', () => {
@@ -74,7 +75,10 @@ describe('bypass labels', () => {
     expect(parseBypassLabels(undefined)).toEqual([])
     expect(isPrivileged(['x'], [])).toBe(false)
   })
-  it('ignores empty entries', () => expect(parseBypassLabels(',+,a')).toEqual([['a']]))
+  it('ignores empty entries', () => expect(parseBypassLabels(', ,a,')).toEqual([['a']]))
+  it.each(['pod:a+', 'a++b', '+a', ',+,a', 'c++'])('rejects the malformed entry %j', (raw) =>
+    expect(() => parseBypassLabels(raw)).toThrow(PolicyError)
+  )
 })
 
 const OURS = JSON.stringify([

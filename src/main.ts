@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   core.setOutput('reason', r.reason)
   core.setOutput('mode', r.mode)
   core.setOutput('bucket', r.bucket)
-  core.setOutput('count', r.count)
+  core.setOutput('ready-count', r.count)
   core.setOutput('cap', r.cap < 0 ? '' : r.cap)
   core.setOutput('privileged', r.privileged)
   core.setOutput('dispatched', r.dispatched)

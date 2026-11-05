@@ -11,7 +11,7 @@ const SHA = 'a'.repeat(40)
 
 const inputs = (o: Partial<Inputs> = {}): Inputs => ({
   mode: '',
-  enabledModes: '',
+  enabledModes: 'FULL_AHEAD,HALF_AHEAD,SLOW_AHEAD,DEAD_SLOW,STANDBY,STOP',
   bypassLabels: 'pod:crusible-dev-0+priority:urgent',
   limitByLabel: LIMITS,
   workflow: 'ci.yml',
@@ -41,23 +41,37 @@ const pr = (o: Partial<PullRequestPayload> = {}): PullRequestPayload => ({
 
 interface Opts {
   ready?: Array<{ number: number; labels?: string[] }>
-  total?: number
+  drafts?: number[]
+  pages?: number
   runs?: Array<{ status: string; conclusion: string | null; event: string }>
   tip?: string
   searchError?: unknown
 }
 function mock(o: Opts = {}) {
-  const search = vi.fn(async () => {
+  const search = vi.fn(async (_q: string, vars: Record<string, unknown>) => {
     if (o.searchError) throw o.searchError
-    const items = (o.ready ?? []).map((r) => ({ number: r.number, labels: (r.labels ?? []).map((name) => ({ name })) }))
-    return { data: { total_count: o.total ?? items.length, items } }
+    const nodes = [
+      ...(o.ready ?? []).map((r) => ({
+        number: r.number,
+        isDraft: false,
+        labels: { nodes: (r.labels ?? []).map((name) => ({ name })) }
+      })),
+      ...(o.drafts ?? []).map((number) => ({ number, isDraft: true, labels: { nodes: [] } }))
+    ]
+    const page = vars['after'] ? Number(vars['after']) : 0
+    const hasNextPage = page + 1 < (o.pages ?? 1)
+    return {
+      repository: {
+        pullRequests: { nodes: page === 0 ? nodes : [], pageInfo: { hasNextPage, endCursor: String(page + 1) } }
+      }
+    }
   })
   const createWorkflowDispatch = vi.fn<(p: { inputs?: Record<string, string> }) => Promise<unknown>>(async () => ({}))
   const addLabels = vi.fn(async () => ({}))
   const removeLabel = vi.fn(async () => ({}))
   const gh: Gh = {
+    graphql: search as unknown as Gh['graphql'],
     rest: {
-      search: { issuesAndPullRequests: search },
       actions: {
         listWorkflowRuns: vi.fn(async () => ({ data: { workflow_runs: o.runs ?? [] } })),
         createWorkflowDispatch
@@ -127,10 +141,38 @@ describe('run: dispatch path', () => {
       runs_on: '"arc"'
     })
   })
-  it('uses an explicit ref, and empty input names are not sent', async () => {
+  it('empty input names are not sent', async () => {
     const m = mock({ tip: SHA })
-    await go(m, { ref: 'feat', prInput: '', failfastInput: '' })
+    await go(m, { prInput: '', failfastInput: '' })
     expect(m.createWorkflowDispatch.mock.calls[0]?.[0]).toMatchObject({ ref: 'feat', inputs: {} })
+  })
+  it('an explicit ref is only the dispatch target; the moved-head check stays on the head branch', async () => {
+    const m = mock({ tip: SHA })
+    const { r } = await go(m, { ref: 'main' })
+    expect(r.decision).toBe('dispatch')
+    expect(m.createWorkflowDispatch.mock.calls[0]?.[0]).toMatchObject({ ref: 'main' })
+    expect(m.gh.rest.git.getRef).toHaveBeenCalledWith({ owner: 'o', repo: 'r', ref: 'heads/feat' })
+  })
+  it('an explicit ref still skips when the head branch moved', async () => {
+    const m = mock({ tip: 'b'.repeat(40) })
+    const { r } = await go(m, { ref: 'main' })
+    expect(r.decision).toBe('skip')
+  })
+  it('a 404 on the branch read names contents: read', async () => {
+    const m = mock()
+    vi.mocked(m.gh.rest.git.getRef).mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
+    await expect(go(m)).rejects.toThrow(/contents: read/)
+  })
+  it('rethrows other branch read errors', async () => {
+    const m = mock()
+    vi.mocked(m.gh.rest.git.getRef).mockRejectedValueOnce(Object.assign(new Error('boom'), { status: 500 }))
+    await expect(go(m)).rejects.toThrow('boom')
+  })
+  it('modes match case-insensitively', async () => {
+    const { r } = await go(mock(), { mode: 'stop' })
+    expect(r).toMatchObject({ mode: 'STOP', decision: 'hold' })
+    const f = await go(mock(), { mode: 'slow_ahead', failfastModes: 'slow_ahead', limitByLabel: '' })
+    expect(f.r).toMatchObject({ mode: 'SLOW_AHEAD', failfast: true })
   })
   it('dry-run dispatches and labels nothing', async () => {
     const m = mock()
@@ -229,15 +271,40 @@ describe('run: caps', () => {
   })
   it('holds when any of two buckets is full', async () => {
     const m = mock({ ready: ready([1, 2, 3]) })
-    m.search.mockResolvedValueOnce({ data: { total_count: 0, items: [] } })
+    m.search.mockResolvedValueOnce({
+      repository: {
+        pullRequests: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null as unknown as string } }
+      }
+    })
     const { r } = await go(m, { mode: 'SLOW_AHEAD' }, { labels: ['pod:a', 'pod:b'] })
     expect(r.decision).toBe('hold')
     expect(r.bucket).toBe('pod:b')
     expect(m.search).toHaveBeenCalledTimes(2)
   })
-  it('holds when the bucket is past one search page and self is not on it', async () => {
-    const { r } = await go(mock({ ready: ready([1, 2]), total: 150 }), { mode: 'SLOW_AHEAD' })
+  it('ignores draft PRs in the count', async () => {
+    const { r } = await go(mock({ ready: ready([1, 2]), drafts: [3, 4] }), { mode: 'SLOW_AHEAD' })
+    expect(r).toMatchObject({ decision: 'dispatch', count: 3, rank: 3 })
+  })
+  it('pages the read and counts PRs on later pages', async () => {
+    const m = mock({ ready: ready([1, 2, 3]), pages: 2 })
+    const { r } = await go(m, { mode: 'SLOW_AHEAD' })
+    expect(m.search).toHaveBeenCalledTimes(2)
+    expect(m.search.mock.calls[1]?.[1]).toMatchObject({ after: '1', label: 'pod:crusible-dev-1' })
     expect(r.decision).toBe('hold')
+  })
+  it('holds fail-safe when the bucket exceeds the page budget', async () => {
+    const m = mock({ ready: ready([1]), pages: 99 })
+    const { r } = await go(m, { mode: 'SLOW_AHEAD' })
+    expect(m.search).toHaveBeenCalledTimes(3 * 5)
+    expect(r.reason).toMatch(/^cap-read-failed.*more than 500/)
+  })
+  it('two PRs readied together at cap 1: only the lower number is admitted (same read, no lag)', async () => {
+    const lim = '[{"label":"pod:*","modes":{"SLOW_AHEAD":1}}]'
+    const both = { ready: ready([20, 21]) }
+    const low = await go(mock(both), { mode: 'SLOW_AHEAD', limitByLabel: lim }, { number: 20 })
+    const high = await go(mock(both), { mode: 'SLOW_AHEAD', limitByLabel: lim }, { number: 21 })
+    expect(low.r).toMatchObject({ decision: 'dispatch', rank: 1 })
+    expect(high.r).toMatchObject({ decision: 'hold', rank: 2 })
   })
   it('FULL_AHEAD is uncapped in our table', async () => {
     const m = mock()
@@ -265,10 +332,31 @@ describe('run: caps', () => {
     expect(r).toMatchObject({ decision: 'dispatch', dispatched: true })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('cap-read-failed'))
   })
-  it('a 403 fails the step at once with the fix', async () => {
-    const m = mock({ searchError: Object.assign(new Error('Resource not accessible'), { status: 403 }) })
+  const rl = (status: number, headers: Record<string, string>, message = 'x') =>
+    Object.assign(new Error(message), { status, response: { headers } })
+  it.each([
+    ['a 403 permission', Object.assign(new Error('Resource not accessible'), { status: 403 })],
+    ['a 422', Object.assign(new Error('cannot be searched'), { status: 422 })],
+    ['a 404', Object.assign(new Error('Not Found'), { status: 404 })],
+    ['a GraphQL FORBIDDEN', Object.assign(new Error('forbidden'), { errors: [{ type: 'FORBIDDEN' }] })],
+    ['a GraphQL INSUFFICIENT_SCOPES', Object.assign(new Error('scopes'), { errors: [{ type: 'INSUFFICIENT_SCOPES' }] })]
+  ])('%s fails the step at once with the fix', async (_n, err) => {
+    const m = mock({ searchError: err })
     await expect(go(m, { mode: 'SLOW_AHEAD' })).rejects.toThrow(/pull-requests: read/)
     expect(m.search).toHaveBeenCalledTimes(1)
+  })
+  it.each([
+    ['a 429', rl(429, {})],
+    ['a 403 with remaining 0', rl(403, { 'x-ratelimit-remaining': '0' })],
+    ['a 403 with retry-after', rl(403, { 'retry-after': '60' })],
+    ['a 403 saying rate limit', rl(403, {}, 'You have exceeded a secondary rate limit')],
+    ['a GraphQL RATE_LIMITED', Object.assign(new Error('limited'), { errors: [{ type: 'RATE_LIMITED' }] })]
+  ])('%s retries twice, then holds', async (_n, err) => {
+    const m = mock({ searchError: err })
+    const { r } = await go(m, { mode: 'SLOW_AHEAD' })
+    expect(m.search).toHaveBeenCalledTimes(3)
+    expect(r).toMatchObject({ decision: 'hold' })
+    expect(r.reason).toMatch(/^cap-read-failed/)
   })
 })
 
@@ -303,7 +391,9 @@ describe('run: held-label and validation', () => {
     [{ dispatchInputs: '[1]' }, /dispatch-inputs/],
     [{ dispatchInputs: '{' }, /dispatch-inputs/],
     [{ limitByLabel: '{' }, /limit-by-label/],
-    [{ enabledModes: 'X' }, /enabled-modes/]
+    [{ enabledModes: 'X' }, /enabled-modes/],
+    [{ enabledModes: ' , ' }, /enabled-modes/],
+    [{ bypassLabels: 'pod:a+' }, /bypass-labels/]
   ] as Array<[Partial<Inputs>, RegExp]>)('rejects invalid input %j', async (i, re) => {
     await expect(go(mock(), i)).rejects.toThrow(re)
     await expect(go(mock(), i)).rejects.toBeInstanceOf(PolicyError)

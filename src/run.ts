@@ -4,7 +4,8 @@ import {
   branchTip,
   dispatch,
   hasRunForSha,
-  httpStatus,
+  isPermissionError,
+  isRateLimit,
   labelNames,
   listReady,
   removeLabel,
@@ -83,16 +84,16 @@ export interface Deps {
 
 const RETRY_MS = [1000, 3000]
 
-/** Read the count, retrying twice on a transient error; a 403/401/404 is a config error and fails loudly at once. */
+/** Read the count, retrying twice on a transient error or rate limit; a permission refusal fails loudly at once. */
 async function readCount(d: Deps, label: string) {
   for (let attempt = 0; ; attempt++) {
     try {
       return await listReady(d.gh, d.repo, label)
     } catch (err) {
-      const s = httpStatus(err)
-      if (s === 401 || s === 403 || s === 404) {
+      if (!isRateLimit(err) && isPermissionError(err)) {
+        const s = (err as { status?: number }).status
         throw new PolicyError(
-          `cap count refused (HTTP ${s}): grant the job "pull-requests: read" (and "actions: write") in permissions`
+          `cap count refused${s ? ` (HTTP ${s})` : ''}: grant the job "pull-requests: read" (and "actions: write", "contents: read") in permissions`
         )
       }
       const wait = RETRY_MS[attempt]
@@ -113,7 +114,7 @@ export async function run(d: Deps): Promise<Result> {
   const caps = parseLimitByLabel(i.limitByLabel)
   const failfastModes = i.failfastModes
     .split(',')
-    .map((s) => s.trim())
+    .map((s) => s.trim().toUpperCase())
     .filter(Boolean)
   const badFf = failfastModes.filter((m) => !isMode(m))
   if (badFf.length > 0) throw new PolicyError(`failfast-modes: unknown mode ${badFf.join(', ')}`)
@@ -172,24 +173,19 @@ export async function run(d: Deps): Promise<Result> {
     out.reason = `${i.workflow} already has a run for ${pr.head.sha.slice(0, 7)}`
   }
 
-  // Caps: privileged PRs sit outside them. One search per bucket; any bucket full holds.
+  // Caps: privileged PRs sit outside them. One GraphQL read per bucket; any bucket full holds.
   const plan = out.decision === 'dispatch' && !privileged ? capPlan(caps, labels, mode) : null
   if (plan) {
     for (const bucket of plan.buckets) {
       let verdict
       try {
-        const { prs, total } = await readCount(d, bucket)
+        const prs = await readCount(d, bucket)
         const others = prs.filter((p) => p.number !== pr.number && bypassMatch(p.labels, rules) === null)
-        // `total` > 100 with self absent: rank is at least 101, well past any cap, so the PR is held.
-        const a = admit(
+        verdict = admit(
           others.map((p) => p.number),
           pr.number,
           plan.cap
         )
-        verdict =
-          total > prs.length && !prs.some((p) => p.number === pr.number)
-            ? { ...a, admitted: false, rank: Math.max(a.rank, prs.length + 1) }
-            : a
       } catch (err) {
         if (err instanceof PolicyError) throw err
         out.bucket = bucket
@@ -215,7 +211,8 @@ export async function run(d: Deps): Promise<Result> {
   }
 
   if (out.decision === 'dispatch') {
-    const tip = await branchTip(d.gh, d.repo, i.ref || pr.head.ref)
+    // The moved-head check is on the PR's own head branch; `ref` is only the dispatch target.
+    const tip = await branchTip(d.gh, d.repo, pr.head.ref)
     if (tip !== pr.head.sha) {
       out.decision = 'skip'
       out.reason = `branch moved to ${tip.slice(0, 7)} after ${pr.head.sha.slice(0, 7)}; the newer push dispatches its own run`

@@ -17,8 +17,8 @@ inputs:
     default: ''
   enabled-modes:
     description: >-
-      Comma list of the modes this repository uses. Default: all six. A mode outside the list fails safe to the
-      nearest more restrictive enabled mode.
+      Comma list of the modes this repository uses, case-insensitive. Default: all six. An empty value fails the step.
+      A mode outside the list fails safe to the nearest more restrictive enabled mode.
     required: false
     default: 'FULL_AHEAD,HALF_AHEAD,SLOW_AHEAD,DEAD_SLOW,STANDBY,STOP'
   bypass-labels:
@@ -95,7 +95,7 @@ outputs:
     description: The mode in force after enabled-modes fail-safe.
   bucket:
     description: The label bucket the cap was checked against, if any.
-  count:
+  ready-count:
     description: Ready pull requests in the bucket, this one included.
   cap:
     description: The cap that applied, empty when none.
