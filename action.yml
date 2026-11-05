@@ -1,0 +1,119 @@
+name: Forge
+description: Gate and dispatch a heavy CI workflow per pull request by CI mode, bypass labels and per-label caps.
+author: Crusible
+branding:
+  icon: shield
+  color: orange
+
+inputs:
+  workflow:
+    description: File name or id of the workflow to dispatch, for example ci.yml. It needs an on.workflow_dispatch trigger.
+    required: true
+  mode:
+    description: >-
+      The CI mode, from a repo or org variable. One of FULL_AHEAD, HALF_AHEAD, SLOW_AHEAD,
+      DEAD_SLOW, STANDBY, STOP. Empty = FULL_AHEAD. An unknown value = SLOW_AHEAD with a warning.
+    required: false
+    default: ''
+  enabled-modes:
+    description: >-
+      Comma list of the modes this repository uses. Default: all six. A mode outside the list fails safe to the
+      nearest more restrictive enabled mode.
+    required: false
+    default: 'FULL_AHEAD,HALF_AHEAD,SLOW_AHEAD,DEAD_SLOW,STANDBY,STOP'
+  bypass-labels:
+    description: >-
+      Labels that let a pull request through STANDBY and past the caps. A comma means OR, a plus means AND inside an
+      entry, for example pod:a+priority:urgent,priority:blocker. STOP still blocks. Empty = nobody bypasses.
+    required: false
+    default: ''
+  limit-by-label:
+    description: >-
+      JSON array from a repo variable: [{"label":"pod:*","modes":{"SLOW_AHEAD":3}}]. Caps ready pull requests per
+      matching label per mode. First matching entry wins; glob * allowed. Empty = no caps.
+    required: false
+    default: ''
+  on-count-error:
+    description: What to do when the ready count cannot be read after two retries, hold or dispatch.
+    required: false
+    default: 'hold'
+  ref:
+    description: Ref to dispatch. Default is the pull request head branch (same-repository pull requests only).
+    required: false
+    default: ''
+  dispatch-inputs:
+    description: JSON object merged into the workflow_dispatch inputs.
+    required: false
+    default: '{}'
+  pr-input:
+    description: Name of the dispatch input that receives the pull request number. Empty = not sent.
+    required: false
+    default: 'pr'
+  failfast-input:
+    description: Name of the dispatch input that receives true or false. Empty = not sent.
+    required: false
+    default: 'failfast'
+  failfast-modes:
+    description: Comma list of modes whose dispatch sets failfast=true.
+    required: false
+    default: 'SLOW_AHEAD'
+  runs-on-input:
+    description: Name of the dispatch input that receives the runner hint as JSON. Empty = not sent.
+    required: false
+    default: ''
+  runs-on-default:
+    description: Runner hint sent normally.
+    required: false
+    default: ''
+  runs-on-overflow:
+    description: Runner hint sent in DEAD_SLOW.
+    required: false
+    default: ''
+  held-label:
+    description: Label added to a held pull request and removed on dispatch. Needs pull-requests write. Empty = no label write.
+    required: false
+    default: ''
+  dedupe:
+    description: Skip when a dispatched run for this head SHA is queued, running or green.
+    required: false
+    default: 'true'
+  dry-run:
+    description: Decide and report, but dispatch and label nothing.
+    required: false
+    default: 'false'
+  token:
+    description: The job token. Leave the default; a personal access token is unsupported.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  decision:
+    description: dispatch, hold or skip.
+  reason:
+    description: One line explaining the decision.
+  mode:
+    description: The mode in force after enabled-modes fail-safe.
+  bucket:
+    description: The label bucket the cap was checked against, if any.
+  count:
+    description: Ready pull requests in the bucket, this one included.
+  cap:
+    description: The cap that applied, empty when none.
+  rank:
+    description: This pull request's rank in the bucket by number.
+  privileged:
+    description: true when a bypass label rule matched.
+  dispatched:
+    description: true when the workflow was dispatched.
+  failfast:
+    description: true when the dispatch carries failfast.
+  runs-on:
+    description: Runner hint as a JSON string.
+  head-sha:
+    description: The pull request head SHA.
+  held-label:
+    description: The label written on a hold, empty if none.
+
+runs:
+  using: node24
+  main: dist/index.js
