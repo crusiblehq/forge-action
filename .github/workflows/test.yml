@@ -1,0 +1,61 @@
+name: test
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run coverage
+  self-test:
+    # Runs the built action from this repository against a mocked pull_request event: STOP + dry-run holds with no API call.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Write a mocked pull_request event
+        run: |
+          printf '%s' '{"pull_request":{"number":7,"state":"open","draft":false,"labels":[],"head":{"ref":"feat","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/repo"}},"base":{"repo":{"full_name":"example/repo"}}}}' > "$RUNNER_TEMP/event.json"
+      - name: Run the action with uses ./ on the mocked event
+        id: forge
+        uses: ./
+        env:
+          GITHUB_EVENT_NAME: pull_request
+          GITHUB_EVENT_PATH: ${{ runner.temp }}/event.json
+          GITHUB_REPOSITORY: example/repo
+        with:
+          workflow: ci.yml
+          mode: stop
+          dry-run: 'true'
+          token: unused-no-api-call-is-made
+      - name: Assert the outputs, defaults included
+        env:
+          DECISION: ${{ steps.forge.outputs.decision }}
+          MODE: ${{ steps.forge.outputs.mode }}
+        run: |
+          test "$DECISION" = hold
+          test "$MODE" = STOP
