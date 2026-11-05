@@ -1,7 +1,7 @@
 {
-  "name": "forge-action",
-  "version": "1.0.0",
-  "private": true,
+  "name": "@crusiblehq/forge-action",
+  "version": "0.1.0",
+  "private": false,
   "description": "CI mode, bypass-label and per-label cap dispatch gate for GitHub Actions",
   "type": "module",
   "license": "Apache-2.0",
@@ -38,5 +38,22 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.72.1",
     "vitest": "^5.1.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/crusiblehq/forge-action.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ]
 }
