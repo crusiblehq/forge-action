@@ -86,9 +86,12 @@ export async function branchTip(gh: Gh, r: Repo, branch: string): Promise<string
     const { data } = await gh.rest.git.getRef({ ...r, ref: `heads/${branch}` })
     return data.object.sha
   } catch (err) {
+    if (isRateLimit(err)) throw err
     const s = httpStatus(err)
     if (s === 403 || s === 404) {
-      throw new PolicyError(`branch read refused (HTTP ${s}): grant the job "contents: read" in permissions`)
+      throw new PolicyError(
+        `branch read refused or not found (HTTP ${s}): grant the job "contents: read" in permissions, or the branch was deleted`
+      )
     }
     throw err
   }
@@ -128,10 +131,11 @@ export function isRateLimit(err: unknown): boolean {
   )
 }
 
-/** A permission or scope refusal: GraphQL reports it as errors[].type on a 200, REST as 401/403/404/422. */
+/** A permission or scope refusal: GraphQL reports it as errors[].type on a 200 (NOT_FOUND is a private repository the token cannot read), REST as 401/403/404/422. */
 export function isPermissionError(err: unknown): boolean {
   const e = err as { errors?: Array<{ type?: string }> } | null
-  if (e?.errors?.some((x) => x.type === 'FORBIDDEN' || x.type === 'INSUFFICIENT_SCOPES')) return true
+  if (e?.errors?.some((x) => x.type === 'FORBIDDEN' || x.type === 'INSUFFICIENT_SCOPES' || x.type === 'NOT_FOUND'))
+    return true
   const s = httpStatus(err)
   return s === 401 || s === 403 || s === 404 || s === 422
 }

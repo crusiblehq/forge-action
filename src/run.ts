@@ -104,6 +104,21 @@ async function readCount(d: Deps, label: string) {
   }
 }
 
+/** The branch tip, retrying twice on a rate limit; undefined when still limited. Other errors propagate. */
+async function readTip(d: Deps, branch: string): Promise<string | undefined> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await branchTip(d.gh, d.repo, branch)
+    } catch (err) {
+      if (!isRateLimit(err)) throw err
+      const wait = RETRY_MS[attempt]
+      if (wait === undefined) return undefined
+      d.warn(`branch read rate limited; retrying in ${wait} ms`)
+      await d.sleep(wait)
+    }
+  }
+}
+
 export async function run(d: Deps): Promise<Result> {
   const { inputs: i, pr } = d
   const enabled = parseEnabledModes(i.enabledModes)
@@ -212,8 +227,11 @@ export async function run(d: Deps): Promise<Result> {
 
   if (out.decision === 'dispatch') {
     // The moved-head check is on the PR's own head branch; `ref` is only the dispatch target.
-    const tip = await branchTip(d.gh, d.repo, pr.head.ref)
-    if (tip !== pr.head.sha) {
+    const tip = await readTip(d, pr.head.ref)
+    if (tip === undefined) {
+      out.decision = 'hold'
+      out.reason = 'tip-read-failed: branch read rate limited after retries; the next event re-evaluates'
+    } else if (tip !== pr.head.sha) {
       out.decision = 'skip'
       out.reason = `branch moved to ${tip.slice(0, 7)} after ${pr.head.sha.slice(0, 7)}; the newer push dispatches its own run`
     } else if (!i.dryRun) {

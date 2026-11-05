@@ -163,6 +163,32 @@ describe('run: dispatch path', () => {
     vi.mocked(m.gh.rest.git.getRef).mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
     await expect(go(m)).rejects.toThrow(/contents: read/)
   })
+  it('a rate-limit 403 on the branch read retries twice, then holds', async () => {
+    const m = mock()
+    const e = () =>
+      Object.assign(new Error('x'), { status: 403, response: { headers: { 'x-ratelimit-remaining': '0' } } })
+    vi.mocked(m.gh.rest.git.getRef).mockRejectedValue(e())
+    const { r } = await go(m)
+    expect(m.gh.rest.git.getRef).toHaveBeenCalledTimes(3)
+    expect(r.decision).toBe('hold')
+    expect(r.reason).toMatch(/^tip-read-failed/)
+    expect(m.createWorkflowDispatch).not.toHaveBeenCalled()
+  })
+  it('a rate-limit 403 on the branch read recovers on retry', async () => {
+    const m = mock()
+    vi.mocked(m.gh.rest.git.getRef).mockRejectedValueOnce(
+      Object.assign(new Error('You have exceeded a secondary rate limit'), { status: 403 })
+    )
+    const { r } = await go(m)
+    expect(r.decision).toBe('dispatch')
+  })
+  it('a true permission 403 on the branch read fails loudly', async () => {
+    const m = mock()
+    vi.mocked(m.gh.rest.git.getRef).mockRejectedValueOnce(
+      Object.assign(new Error('Resource not accessible'), { status: 403 })
+    )
+    await expect(go(m)).rejects.toThrow(/contents: read/)
+  })
   it('rethrows other branch read errors', async () => {
     const m = mock()
     vi.mocked(m.gh.rest.git.getRef).mockRejectedValueOnce(Object.assign(new Error('boom'), { status: 500 }))
@@ -339,6 +365,10 @@ describe('run: caps', () => {
     ['a 422', Object.assign(new Error('cannot be searched'), { status: 422 })],
     ['a 404', Object.assign(new Error('Not Found'), { status: 404 })],
     ['a GraphQL FORBIDDEN', Object.assign(new Error('forbidden'), { errors: [{ type: 'FORBIDDEN' }] })],
+    [
+      'a GraphQL NOT_FOUND repository',
+      Object.assign(new Error('Could not resolve to a Repository'), { errors: [{ type: 'NOT_FOUND' }] })
+    ],
     ['a GraphQL INSUFFICIENT_SCOPES', Object.assign(new Error('scopes'), { errors: [{ type: 'INSUFFICIENT_SCOPES' }] })]
   ])('%s fails the step at once with the fix', async (_n, err) => {
     const m = mock({ searchError: err })

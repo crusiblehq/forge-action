@@ -34612,9 +34612,11 @@ async function branchTip(gh, r, branch) {
         return data.object.sha;
     }
     catch (err) {
+        if (isRateLimit(err))
+            throw err;
         const s = httpStatus(err);
         if (s === 403 || s === 404) {
-            throw new PolicyError(`branch read refused (HTTP ${s}): grant the job "contents: read" in permissions`);
+            throw new PolicyError(`branch read refused or not found (HTTP ${s}): grant the job "contents: read" in permissions, or the branch was deleted`);
         }
         throw err;
     }
@@ -34645,10 +34647,10 @@ function isRateLimit(err) {
     const h = e.response?.headers ?? {};
     return (String(h['x-ratelimit-remaining']) === '0' || h['retry-after'] !== undefined || /rate limit/i.test(e.message ?? ''));
 }
-/** A permission or scope refusal: GraphQL reports it as errors[].type on a 200, REST as 401/403/404/422. */
+/** A permission or scope refusal: GraphQL reports it as errors[].type on a 200 (NOT_FOUND is a private repository the token cannot read), REST as 401/403/404/422. */
 function isPermissionError(err) {
     const e = err;
-    if (e?.errors?.some((x) => x.type === 'FORBIDDEN' || x.type === 'INSUFFICIENT_SCOPES'))
+    if (e?.errors?.some((x) => x.type === 'FORBIDDEN' || x.type === 'INSUFFICIENT_SCOPES' || x.type === 'NOT_FOUND'))
         return true;
     const s = httpStatus(err);
     return s === 401 || s === 403 || s === 404 || s === 422;
@@ -34671,6 +34673,23 @@ async function readCount(d, label) {
             if (wait === undefined)
                 throw err;
             d.warn(`cap count failed (${err.message}); retrying in ${wait} ms`);
+            await d.sleep(wait);
+        }
+    }
+}
+/** The branch tip, retrying twice on a rate limit; undefined when still limited. Other errors propagate. */
+async function readTip(d, branch) {
+    for (let attempt = 0;; attempt++) {
+        try {
+            return await branchTip(d.gh, d.repo, branch);
+        }
+        catch (err) {
+            if (!isRateLimit(err))
+                throw err;
+            const wait = RETRY_MS[attempt];
+            if (wait === undefined)
+                return undefined;
+            d.warn(`branch read rate limited; retrying in ${wait} ms`);
             await d.sleep(wait);
         }
     }
@@ -34780,8 +34799,12 @@ async function run(d) {
     }
     if (out.decision === 'dispatch') {
         // The moved-head check is on the PR's own head branch; `ref` is only the dispatch target.
-        const tip = await branchTip(d.gh, d.repo, pr.head.ref);
-        if (tip !== pr.head.sha) {
+        const tip = await readTip(d, pr.head.ref);
+        if (tip === undefined) {
+            out.decision = 'hold';
+            out.reason = 'tip-read-failed: branch read rate limited after retries; the next event re-evaluates';
+        }
+        else if (tip !== pr.head.sha) {
             out.decision = 'skip';
             out.reason = `branch moved to ${tip.slice(0, 7)} after ${pr.head.sha.slice(0, 7)}; the newer push dispatches its own run`;
         }
