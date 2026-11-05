@@ -14,9 +14,9 @@ The decision comes from three things you control: a **CI mode** (a repo variable
 name: forge
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
 concurrency: { group: 'forge-${{ github.event.pull_request.number }}', cancel-in-progress: true }
-permissions: { actions: write, pull-requests: read }
+permissions: { actions: write, pull-requests: read, contents: read }
 jobs:
   forge:
     runs-on: ubuntu-latest
@@ -92,11 +92,18 @@ A JSON array, from a repository variable. Each entry gives a label (an exact nam
 - The first entry that matches any of the pull request's labels is its rule, so write specific entries before globs.
 - Each matching label value is its own bucket: `pod:a` and `pod:b` have separate counts under one `pod:*` entry.
 - A mode missing from `modes` is uncapped. A pull request with no matching label is uncapped.
-- The count is **one search call** per bucket at dispatch time. Bypassing pull requests are not counted.
-- Pull requests rank by number, lowest first. The lowest `cap` numbers are admitted. Two pull requests readied together never both pass a cap of 1.
+- The count is **one GraphQL read** per bucket at dispatch time (`pullRequests(states: OPEN, labels: [...])`, paged up to 500, drafts filtered out). Bypassing pull requests are not counted.
+- Pull requests rank by number, lowest first. The lowest `cap` numbers are admitted. Two pull requests readied together resolve the same way in both jobs: the lower number is admitted and the higher is held, because each job reads the live list (GraphQL, not the search index) and ranks by number.
 - The cap bounds per event; it is not a lock. Two jobs that read before each other's write can admit cap+1 until the next event re-ranks.
-- A count that cannot be read (after two retries) **holds** the pull request (`on-count-error: hold`, the default). A 401, 403 or 404 fails the step at once and names the missing permission.
-- The search API is an index and can lag by seconds; this pull request is always counted as itself.
+- A count that cannot be read (after two retries) **holds** the pull request (`on-count-error: hold`, the default). A rate limit (429, or a 403 with `x-ratelimit-remaining: 0` or `retry-after`) retries and then holds. A permission refusal (401, 403, 404, 422, GraphQL `FORBIDDEN`) fails the step at once and names the missing permission.
+- This pull request is always counted as itself, even if the read omits it. More than 500 ready pull requests under one label hold (`cap-read-failed`).
+
+## Known limits in v1
+
+- **Held-label release is not built.** `held-label` marks a held pull request and clears on dispatch, but a `closed`, `converted_to_draft` or `unlabeled` event does not dispatch the lowest held pull request (SPEC 3.2.5). A held pull request runs on its next event: push, relabel or ready.
+- **A re-run replays the original event payload.** Labels, draft state and head SHA come from the event as it was when it fired. A bypass label added after the event is not seen by a re-run, and a pull request converted to draft afterwards can still dispatch. Trigger a new event (`labeled`, `synchronize`) instead.
+- **`runs-on-input` defaults to empty** where SPEC 1.3 names `runs_on`: an unknown dispatch input is a 422, so nothing is sent unless asked. Recorded as a spec amendment.
+- **Dependabot npm PRs fail `check-dist`** until `dist/` is rebuilt on the branch.
 
 ## Inputs
 
@@ -104,11 +111,11 @@ A JSON array, from a repository variable. Each entry gives a label (an exact nam
 | ------------------ | --------------------- | ------------------------------------------------------------------------ |
 | `workflow`         | required              | Workflow file name or id to dispatch                                     |
 | `mode`             | empty (FULL_AHEAD)    | Pass `${{ vars.CI_MODE }}`                                               |
-| `enabled-modes`    | all six               | Comma list of modes in use                                               |
+| `enabled-modes`    | all six               | Comma list of modes in use, case-insensitive; empty is an error          |
 | `bypass-labels`    | empty                 | `,` OR, `+` AND                                                          |
 | `limit-by-label`   | empty                 | JSON caps; pass `${{ vars.CI_LIMIT_BY_LABEL }}`                          |
 | `on-count-error`   | `hold`                | `hold` or `dispatch` when the count cannot be read                       |
-| `ref`              | PR head branch        | Ref to dispatch                                                          |
+| `ref`              | PR head branch        | Ref to dispatch; the moved-head check always uses the PR head branch     |
 | `dispatch-inputs`  | `{}`                  | JSON merged into the dispatch inputs                                     |
 | `pr-input`         | `pr`                  | Dispatch input that receives the PR number; empty = not sent             |
 | `failfast-input`   | `failfast`            | Dispatch input that receives `true`/`false`; empty = not sent            |
@@ -123,7 +130,7 @@ A JSON array, from a repository variable. Each entry gives a label (an exact nam
 
 ## Outputs
 
-`decision` (`dispatch`, `hold`, `skip`), `reason`, `mode`, `bucket`, `count`, `cap`, `rank`, `privileged`, `dispatched`, `failfast`, `runs-on`, `head-sha`, `held-label`.
+`decision` (`dispatch`, `hold`, `skip`), `reason`, `mode`, `bucket`, `ready-count`, `cap`, `rank`, `privileged`, `dispatched`, `failfast`, `runs-on`, `head-sha`, `held-label`.
 
 ## Permissions
 
@@ -133,9 +140,10 @@ Least privilege:
 permissions:
   actions: write # create the workflow_dispatch and list runs for the dedupe
   pull-requests: read # the ready count; `write` only if held-label is set
+  contents: read # the head-branch tip check (git.getRef); a private repository returns 404 without it
 ```
 
-`contents` is not needed. The mode and cap variables are read by GitHub before the job starts (`vars` context), which is why they arrive as inputs: the job token cannot read the variables API.
+Without `contents: read` a private repository answers the branch read with 404 and the step fails naming the permission. The mode and cap variables are read by GitHub before the job starts (`vars` context), which is why they arrive as inputs: the job token cannot read the variables API.
 
 ## Pinning
 

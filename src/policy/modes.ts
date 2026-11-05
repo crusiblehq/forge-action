@@ -18,23 +18,24 @@ export interface ParsedMode {
   warnings: string[]
 }
 
-/** Unset/empty = FULL_AHEAD. Legacy GREEN/YELLOW map with a warning. Unknown = SLOW_AHEAD with a warning. */
+/** Case-insensitive. Unset/empty = FULL_AHEAD. Legacy GREEN/YELLOW map with a warning. Unknown = SLOW_AHEAD with a warning. */
 export function parseMode(raw: string | undefined): ParsedMode {
-  const v = (raw ?? '').trim()
+  const given = (raw ?? '').trim()
+  const v = given.toUpperCase()
   if (v === '') return { mode: 'FULL_AHEAD', warnings: [] }
   if (isMode(v)) return { mode: v, warnings: [] }
   const legacy = LEGACY[v]
   if (legacy) return { mode: legacy, warnings: [`legacy-mode-${v}`] }
-  return { mode: 'SLOW_AHEAD', warnings: [`mode-value: "${v}" is not a mode, using SLOW_AHEAD`] }
+  return { mode: 'SLOW_AHEAD', warnings: [`mode-value: "${given}" is not a mode, using SLOW_AHEAD`] }
 }
 
-/** Comma list of modes. Empty = all six. An unknown token or a list that parses to nothing is an error. */
+/** Comma list of modes, case-insensitive. An empty list or an unknown token is an error (the action default names all six). */
 export function parseEnabledModes(raw: string | undefined): Mode[] {
   const parts = (raw ?? '')
     .split(',')
-    .map((s) => s.trim())
+    .map((s) => s.trim().toUpperCase())
     .filter(Boolean)
-  if (parts.length === 0) return [...MODES]
+  if (parts.length === 0) throw new PolicyError('enabled-modes: the list is empty; name at least one mode')
   const bad = parts.filter((p) => !isMode(p))
   if (bad.length > 0) throw new PolicyError(`enabled-modes: unknown mode ${bad.map((b) => `"${b}"`).join(', ')}`)
   return MODES.filter((m) => parts.includes(m))
