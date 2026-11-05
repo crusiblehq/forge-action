@@ -1,5 +1,5 @@
 name: release
-# A forge master publishes a vX.Y.Z release. This workflow rebuilds, verifies dist/, attests it, and moves the major tag (v1).
+# A forge master publishes a vX.Y.Z release. This workflow rebuilds, verifies dist/, attests it, and publishes to npm by trusted publishing (OIDC), and moves the major tag (v1).
 on:
   release:
     types: [published]
@@ -13,7 +13,7 @@ jobs:
     if: ${{ !github.event.release.prerelease }}
     permissions:
       contents: write # move the floating major tag
-      id-token: write # build provenance
+      id-token: write # build provenance and the npm trusted-publishing OIDC token
       attestations: write
     env:
       TAG: ${{ github.event.release.tag_name }}
@@ -46,6 +46,16 @@ jobs:
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/index.js
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Publish to npm by trusted publishing
+        run: |
+          # Trusted publishing needs npm >= 11.5.1. No NPM_TOKEN or NODE_AUTH_TOKEN: OIDC supplies the token.
+          npm install -g npm@11.21.2
+          [ "v$(node -p "require('./package.json').version")" = "$TAG" ] || { echo "::error::package.json version differs from $TAG"; exit 1; }
+          npm publish --provenance --access public
       - name: Move the major tag
         env:
           GH_TOKEN: ${{ github.token }}
