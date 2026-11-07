@@ -1,6 +1,6 @@
 // Read ops: files, ref.
 import { Unreadable, type Api } from './api.js'
-import { FILE_CAP, checkRelPath, writeUnder } from './safe.js'
+import { FILE_CAP, checkRef, checkRelPath, writeUnder } from './safe.js'
 import { list, type OpInputs } from './shared.js'
 
 const enc = (p: string) => p.split('/').map(encodeURIComponent).join('/')
@@ -29,6 +29,7 @@ export async function files(api: Api, i: OpInputs) {
 // ref: "heads/<branch>" or "tags/<tag>"; a bare name is a branch.
 export async function ref(api: Api, i: OpInputs) {
   if (!i.ref) throw new Unreadable('ref needs ref')
+  checkRef(i.ref)
   const name = /^(heads|tags)\//.test(i.ref) ? i.ref : `heads/${i.ref}`
   const d = await api.read(`/repos/${i.repository}/git/ref/${enc(name)}`)
   if (!d) return { verdict: 'absent', ok: false }
