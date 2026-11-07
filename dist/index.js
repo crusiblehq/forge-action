@@ -34691,8 +34691,9 @@ const SHA$1 = /^[0-9a-f]{40}$/;
 function validate(i) {
     if (!REPO.test(i.repository) || i.repository.split('/').some((p) => p === '.' || p === '..'))
         throw new Error(`bad repository: ${JSON.stringify(i.repository)}`);
-    if (i.pr && !NUM.test(i.pr))
-        throw new Error(`bad pr: ${JSON.stringify(i.pr)}`);
+    for (const k of ['pr', 'run', 'attempt', 'max-runs', 'delay-seconds'])
+        if (i[k] && !NUM.test(i[k]))
+            throw new Error(`bad ${k}: ${JSON.stringify(i[k])}`);
 }
 
 // Path and size guards shared by the file-fetching ops.
@@ -34733,12 +34734,12 @@ function writeUnder(dest, rel, bytes) {
 // Git data reads: commit, tree, blob. Trees and blobs, never a tarball.
 const SHA = /^[0-9a-f]{40}$/;
 const FILES_CAP = 300;
-const need = (cond, msg) => {
+const need$2 = (cond, msg) => {
     if (!cond)
         throw new Unreadable(msg);
 };
 async function commit(api, i) {
-    need(SHA.test(i.sha ?? ''), 'commit needs a 40-hex sha');
+    need$2(SHA.test(i.sha ?? ''), 'commit needs a 40-hex sha');
     const d = await api.read(`/repos/${i.repository}/commits/${i.sha}`);
     if (!d)
         return { verdict: 'absent', ok: false };
@@ -34749,7 +34750,7 @@ async function commit(api, i) {
         from: f.previous_filename
     }));
     // the API lists at most 300 files on this call: a full page may be a cut list, and a cut list is a failure, never a result
-    need(files.length < FILES_CAP, `commit lists ${files.length} files, the API cap: the list may be truncated`);
+    need$2(files.length < FILES_CAP, `commit lists ${files.length} files, the API cap: the list may be truncated`);
     return {
         verdict: 'ok',
         sha: d.sha,
@@ -34761,19 +34762,19 @@ async function commit(api, i) {
     };
 }
 async function tree(api, i) {
-    need(SHA.test(i.sha ?? ''), 'tree needs a 40-hex sha');
+    need$2(SHA.test(i.sha ?? ''), 'tree needs a 40-hex sha');
     const recursive = i.recursive === 'true';
     const max = Number(i['max-entries'] || 3000);
     if (recursive) {
         // recursion is for subtrees: a commit sha (a root) is refused
         const isCommit = await api.read(`/repos/${i.repository}/git/commits/${i.sha}`);
-        need(!isCommit, 'recursive tree refused on a commit (root) sha; walk to the subtree first');
+        need$2(!isCommit, 'recursive tree refused on a commit (root) sha; walk to the subtree first');
     }
     const d = await api.read(`/repos/${i.repository}/git/trees/${i.sha}`, { query: recursive ? { recursive: 1 } : {} });
     if (!d)
         return { verdict: 'absent', ok: false };
-    need(!d.truncated, 'tree truncated by the API');
-    need(d.tree.length <= max, `tree has ${d.tree.length} entries, above ${max}`);
+    need$2(!d.truncated, 'tree truncated by the API');
+    need$2(d.tree.length <= max, `tree has ${d.tree.length} entries, above ${max}`);
     const prefixes = list(i.paths ?? '');
     const keep = (e) => !prefixes.length || prefixes.some((p) => e.path === p || e.path.startsWith(`${p}/`));
     const entries = d.tree
@@ -34783,22 +34784,22 @@ async function tree(api, i) {
 }
 // paths: lines "<relative path>=<blob sha>". Fetch each sha once (a shared `cache` dir spans steps), 8 at a time.
 async function blob(api, i) {
-    need(i.dest, 'blob needs dest');
+    need$2(i.dest, 'blob needs dest');
     const dest = i.dest;
     const pairs = list(i.paths ?? '').map((l) => {
         const [path, sha] = l.split('=');
-        need(path && SHA.test(sha ?? ''), `blob pair must be path=sha: ${l}`);
+        need$2(path && SHA.test(sha ?? ''), `blob pair must be path=sha: ${l}`);
         return [checkRelPath(path), sha];
     });
-    need(pairs.length, 'blob needs paths');
+    need$2(pairs.length, 'blob needs paths');
     const bytes = new Map();
     const fetchOne = async (sha) => {
         const cached = i.cache ? join(i.cache, sha) : '';
         if (cached && existsSync$1(cached))
             return readFileSync$1(cached);
         const d = await api.read(`/repos/${i.repository}/git/blobs/${sha}`);
-        need(d, `blob ${sha} absent`);
-        need(d.size <= FILE_CAP, `blob ${sha}: ${d.size} bytes above the ${FILE_CAP} cap`);
+        need$2(d, `blob ${sha} absent`);
+        need$2(d.size <= FILE_CAP, `blob ${sha}: ${d.size} bytes above the ${FILE_CAP} cap`);
         const b = Buffer.from(d.content, d.encoding === 'base64' ? 'base64' : 'utf8');
         if (cached) {
             mkdirSync(i.cache, { recursive: true });
@@ -34936,6 +34937,225 @@ async function ref(api, i) {
     return { verdict: 'ok', sha: d.object.sha, type: d.object.type, ok: true };
 }
 
+// Actions ops: run-jobs, lane-last-green. Jobs are read to the last page; a count that disagrees with total_count fails.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const LANE = /^[\w.-]+$/;
+function need$1(cond, msg) {
+    if (!cond)
+        throw new Unreadable(msg);
+}
+async function jobsOf(api, repo, id, attempt) {
+    const path = `/repos/${repo}/actions/runs/${id}/attempts/${attempt}/jobs`;
+    const rows = [];
+    for (let page = 1; page <= 5; page++) {
+        const d = await api.read(path, { query: { per_page: 100, page } });
+        if (!d)
+            return null;
+        rows.push(...d.jobs);
+        if (rows.length >= d.total_count)
+            return rows;
+        need$1(d.jobs.length === 100, `${path}: ${rows.length} of ${d.total_count} jobs`);
+    }
+    throw new Unreadable(`${path}: more than 5 pages of jobs`);
+}
+async function runJobs(api, i) {
+    need$1(i.run, 'run-jobs needs run');
+    const run = await api.read(`/repos/${i.repository}/actions/runs/${i.run}`);
+    if (!run)
+        return { verdict: 'absent', ok: false };
+    const attempt = i.attempt || run.run_attempt;
+    const rows = await jobsOf(api, i.repository, i.run, attempt);
+    need$1(rows, `jobs of run ${i.run} attempt ${attempt} not found`);
+    const jobs = rows.map((j) => ({
+        id: j.id,
+        name: j.name,
+        status: j.status,
+        conclusion: j.conclusion,
+        started_at: j.started_at,
+        completed_at: j.completed_at,
+        runner_name: j.runner_name
+    }));
+    // a run still going has no final conclusions: report it, do not pass it off as a result
+    const done = run.status === 'completed';
+    return {
+        verdict: done ? 'ok' : 'incomplete',
+        run: Number(i.run),
+        attempt: Number(attempt),
+        conclusion: run.conclusion,
+        jobs,
+        ok: done
+    };
+}
+// `stage / lane` in a called workflow, or just the lane; a matrix suffix ` (…)` dropped.
+const laneOf = (name) => {
+    const bare = name.replace(/\s*\([^()]*\)\s*$/, '');
+    return (bare.includes('/') ? bare.split('/').pop() : bare).trim();
+};
+// Newest completed run first; a lane is green in a run only when every one of its jobs succeeded. A lane with no hit in the
+// scanned runs is `missing`: "no record in N runs", never "never green".
+async function laneLastGreen(api, i) {
+    const lanes = list(i.lanes ?? '');
+    need$1(lanes.length && lanes.length <= 24 && lanes.every((l) => LANE.test(l)), 'lane-last-green needs 1-24 lanes');
+    const max = Number(i['max-runs'] || 30);
+    need$1(max >= 1 && max <= 100, 'max-runs must be 1-100');
+    const q = { status: 'completed', branch: i.ref || 'main', event: i.event || 'push' };
+    const wf = encodeURIComponent(i.workflow || 'ci.yml');
+    const d = await api.read(`/repos/${i.repository}/actions/workflows/${wf}/runs`, {
+        query: { ...q, per_page: Math.min(max, 100) }
+    });
+    need$1(d, `workflow ${i.workflow || 'ci.yml'} not found`);
+    const runs = d.workflow_runs.slice(0, max);
+    const found = {};
+    let scanned = 0;
+    for (const run of runs) {
+        if (lanes.every((l) => l in found))
+            break;
+        scanned++;
+        const jobs = await jobsOf(api, i.repository, run.id, run.run_attempt);
+        need$1(jobs, `jobs of run ${run.id} not found`);
+        const green = new Map();
+        for (const j of jobs) {
+            const lane = laneOf(j.name);
+            if (lanes.includes(lane) && !(lane in found))
+                green.set(lane, (green.get(lane) ?? true) && j.conclusion === 'success');
+        }
+        for (const [lane, ok] of green)
+            if (ok)
+                found[lane] = run.head_sha.slice(0, 12);
+    }
+    return { verdict: 'ok', lanes: found, missing: lanes.filter((l) => !(l in found)), scanned, ok: true };
+}
+
+// Pull request ops: pr-state, dispatch-pin, body-text. Each reads the live pull request; none writes.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const READS = 5;
+const need = (cond, msg) => {
+    if (!cond)
+        throw new Unreadable(msg);
+};
+const needPr = (i, op) => {
+    need(i.pr, `${op} needs pr`);
+    need(SHA$1.test(i.sha ?? ''), `${op} needs the expected 40-hex sha`);
+};
+const delay = (i) => {
+    const s = Number(i['delay-seconds'] || 12);
+    need(s <= 60, 'delay-seconds above the 60 s cap');
+    return s * 1000;
+};
+async function readPull(api, i) {
+    const d = await api.read(`/repos/${i.repository}/pulls/${i.pr}`);
+    need(d, `pull request #${i.pr} not found`);
+    return d;
+}
+const facts = (d) => ({
+    head_sha: d.head.sha,
+    head_ref: d.head.ref,
+    base_ref: d.base.ref,
+    base_sha: d.base.sha,
+    head_repo: d.head.repo?.full_name ?? null,
+    author_id: d.user?.id ?? null
+});
+// REST spells the guard's CONFLICTING/DIRTY as mergeable=false / mergeable_state=dirty; null is still being computed.
+const conflicting = (d) => d.mergeable === false || d.mergeable_state === 'dirty';
+/** Newest ci-required status at the sha, scanning pages until it is found; a full last page with none is unreadable. */
+async function ciRequired(api, repo, sha) {
+    const max = 3;
+    for (let page = 1; page <= max; page++) {
+        const rows = await api.read(`/repos/${repo}/commits/${sha}/statuses`, { query: { per_page: 100, page } });
+        need(Array.isArray(rows), `statuses of ${sha} unreadable`);
+        const hit = rows.find((s) => s.context === 'ci-required');
+        if (hit)
+            return hit;
+        if (rows.length < 100)
+            return null;
+    }
+    throw new Unreadable(`statuses of ${sha}: ci-required not in the first ${max} pages`);
+}
+/** The run id whose green ci-required this head may reuse: a completed ci.yml dispatch of this pull request on exactly this sha. */
+async function reusedRun(api, i) {
+    const s = await ciRequired(api, i.repository, i.sha);
+    if (s?.state !== 'success' || s.creator?.login !== 'github-actions[bot]')
+        return null;
+    const m = new RegExp(`^https://github\\.com/${i.repository}/actions/runs/(\\d+)$`).exec(s.target_url ?? '');
+    if (!m)
+        return null;
+    const run = await api.read(`/repos/${i.repository}/actions/runs/${m[1]}`);
+    need(run, `run ${m[1]} not found`);
+    const ok = run.path === '.github/workflows/ci.yml' &&
+        run.head_sha === i.sha &&
+        run.event === 'workflow_dispatch' &&
+        run.status === 'completed' &&
+        String(run.display_title ?? '').startsWith(`CI PR #${i.pr} @`);
+    return ok ? Number(m[1]) : null;
+}
+// Verdict ok|closed|superseded|reused|conflict; any unread state throws (unreadable). sha is the head the caller tests.
+async function prState(api, i, d) {
+    needPr(i, 'pr-state');
+    const wait = delay(i);
+    let pull = await readPull(api, i);
+    const out = (verdict, extra = {}) => ({
+        verdict,
+        pr: Number(i.pr),
+        state: pull.merged ? 'merged' : pull.state,
+        ...facts(pull),
+        ...extra,
+        ok: verdict === 'ok'
+    });
+    if (pull.state !== 'open')
+        return out('closed');
+    if (pull.head.sha !== i.sha) {
+        await d.sleep(wait);
+        pull = await readPull(api, i);
+        if (pull.state !== 'open')
+            return out('closed');
+        if (pull.head.sha !== i.sha)
+            return out('superseded', { expected_sha: i.sha });
+    }
+    const reused = await reusedRun(api, i);
+    // a verdict answers for the base it was cut against: a retargeted pull request does not reuse it
+    if (reused && (!i.base || i.base === pull.base.ref))
+        return out('reused', { run: reused });
+    let reads = 0;
+    for (;;) {
+        reads++;
+        if (!conflicting(pull))
+            break;
+        if (reads >= READS)
+            return out('conflict', { reads });
+        await d.sleep(wait);
+        pull = await readPull(api, i);
+        need(pull.head.sha === i.sha, `head moved to ${pull.head.sha} during the mergeable reads`);
+    }
+    const files = await pages(api, `/repos/${i.repository}/pulls/${i.pr}/files`, {}, null, 30);
+    need(files.length === pull.changed_files, `changed files read ${files.length} of ${pull.changed_files}`);
+    return out('ok', { reads, files: files.map((f) => ({ path: f.filename, status: f.status })) });
+}
+// The dispatch target's tip must be the sha the pass listed, which must be the pull request's head.
+async function dispatchPin(api, i) {
+    needPr(i, 'dispatch-pin');
+    const pull = await readPull(api, i);
+    need(pull.state === 'open', `pull request #${i.pr} is ${pull.state}`);
+    need(pull.head.sha === i.sha, `pull request #${i.pr} head is ${pull.head.sha}, the pass listed ${i.sha}`);
+    const ref = i.ref || pull.head.ref;
+    const name = /^heads\//.test(ref) ? ref : `heads/${ref}`;
+    const tip = await api.read(`/repos/${i.repository}/git/ref/${name.split('/').map(encodeURIComponent).join('/')}`);
+    need(tip, `dispatch target ${name} does not exist in ${i.repository}`);
+    need(tip.object.sha === i.sha, `dispatch target ${name} tip is ${tip.object.sha}, the pass listed ${i.sha}`);
+    return { verdict: 'ok', ...facts(pull), ok: true };
+}
+// Live title and body. The body is attacker-controlled text: it goes to files under dest, never to an output or a log.
+async function bodyText(api, i) {
+    needPr(i, 'body-text');
+    need(i.dest, 'body-text needs dest');
+    const pull = await readPull(api, i);
+    need(pull.head.sha === i.sha, `pull request #${i.pr} head is ${pull.head.sha}, the pass listed ${i.sha}`);
+    const title = pull.title ?? '';
+    const body = pull.body ?? '';
+    writeUnder(i.dest, 'title.txt', Buffer.from(title));
+    writeUnder(i.dest, 'body.md', Buffer.from(body));
+    return { verdict: 'ok', title, title_chars: title.length, body_chars: body.length, ok: true };
+}
+
 // Write ops: status, label, dispatch.
 const GATES_MAX = 4096;
 const STATES = ['pending', 'success', 'failure', 'error'];
@@ -35037,7 +35257,12 @@ const OPS = {
     blob: blob,
     pulls: pulls,
     runs: runs,
-    runners: runners
+    runners: runners,
+    'pr-state': prState,
+    'dispatch-pin': dispatchPin,
+    'body-text': bodyText,
+    'lane-last-green': laneLastGreen,
+    'run-jobs': runJobs
 };
 const OP_INPUTS = [
     'op',
@@ -35066,7 +35291,12 @@ const OP_INPUTS = [
     'max-entries',
     'max-pages',
     'cache',
-    'scope'
+    'scope',
+    'run',
+    'attempt',
+    'lanes',
+    'max-runs',
+    'delay-seconds'
 ];
 /** Returns the process exit code. */
 async function execOp(env) {
