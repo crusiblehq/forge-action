@@ -1,12 +1,13 @@
 // Write ops: status, label, dispatch.
 import { Unreadable, type Api } from './api.js'
-import { list, type OpInputs, type OpDeps } from './shared.js'
+import { list, SHA, type OpInputs, type OpDeps } from './shared.js'
 
 export const GATES_MAX = 4096
 const STATES = ['pending', 'success', 'failure', 'error']
 
 export async function status(api: Api, i: OpInputs, { sleep }: OpDeps) {
   if (!i.sha || !i.context) throw new Unreadable('status needs sha and context')
+  if (!SHA.test(i.sha)) throw new Unreadable(`bad sha: ${JSON.stringify(i.sha)}`)
   if (!i.state) {
     // read: latest state of one context at sha, optionally polling in three equal steps
     const waitMs = Number(i['wait-seconds'] || 0) * 1000
