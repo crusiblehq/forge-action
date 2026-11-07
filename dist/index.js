@@ -35005,10 +35005,10 @@ async function laneLastGreen(api, i) {
     });
     need$1(d, `workflow ${i.workflow || 'ci.yml'} not found`);
     const runs = d.workflow_runs.slice(0, max);
-    const found = {};
+    const found = new Map();
     let scanned = 0;
     for (const run of runs) {
-        if (lanes.every((l) => l in found))
+        if (lanes.every((l) => found.has(l)))
             break;
         scanned++;
         const jobs = await jobsOf(api, i.repository, run.id, run.run_attempt);
@@ -35016,14 +35016,20 @@ async function laneLastGreen(api, i) {
         const green = new Map();
         for (const j of jobs) {
             const lane = laneOf(j.name);
-            if (lanes.includes(lane) && !(lane in found))
+            if (lanes.includes(lane) && !found.has(lane))
                 green.set(lane, (green.get(lane) ?? true) && j.conclusion === 'success');
         }
         for (const [lane, ok] of green)
             if (ok)
-                found[lane] = run.head_sha.slice(0, 12);
+                found.set(lane, run.head_sha.slice(0, 12));
     }
-    return { verdict: 'ok', lanes: found, missing: lanes.filter((l) => !(l in found)), scanned, ok: true };
+    return {
+        verdict: 'ok',
+        lanes: Object.fromEntries(found),
+        missing: lanes.filter((l) => !found.has(l)),
+        scanned,
+        ok: true
+    };
 }
 
 // Pull request ops: pr-state, dispatch-pin, body-text. Each reads the live pull request; none writes.
@@ -35076,7 +35082,7 @@ async function reusedRun(api, i) {
     const s = await ciRequired(api, i.repository, i.sha);
     if (s?.state !== 'success' || s.creator?.login !== 'github-actions[bot]')
         return null;
-    const m = new RegExp(`^https://github\\.com/${i.repository}/actions/runs/(\\d+)$`).exec(s.target_url ?? '');
+    const m = new RegExp(`^https://github\\.com/${i.repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/actions/runs/(\\d+)$`).exec(s.target_url ?? '');
     if (!m)
         return null;
     const run = await api.read(`/repos/${i.repository}/actions/runs/${m[1]}`);
@@ -35128,7 +35134,14 @@ async function prState(api, i, d) {
     }
     const files = await pages(api, `/repos/${i.repository}/pulls/${i.pr}/files`, {}, null, 30);
     need(files.length === pull.changed_files, `changed files read ${files.length} of ${pull.changed_files}`);
-    return out('ok', { reads, files: files.map((f) => ({ path: f.filename, status: f.status })) });
+    return out('ok', {
+        reads,
+        files: files.map((f) => ({
+            path: f.filename,
+            status: f.status,
+            ...(f.previous_filename ? { from: f.previous_filename } : {})
+        }))
+    });
 }
 // The dispatch target's tip must be the sha the pass listed, which must be the pull request's head.
 async function dispatchPin(api, i) {
@@ -35136,7 +35149,7 @@ async function dispatchPin(api, i) {
     const pull = await readPull(api, i);
     need(pull.state === 'open', `pull request #${i.pr} is ${pull.state}`);
     need(pull.head.sha === i.sha, `pull request #${i.pr} head is ${pull.head.sha}, the pass listed ${i.sha}`);
-    const ref = i.ref || pull.head.ref;
+    const ref = checkRef(i.ref || pull.head.ref);
     const name = /^heads\//.test(ref) ? ref : `heads/${ref}`;
     const tip = await api.read(`/repos/${i.repository}/git/ref/${name.split('/').map(encodeURIComponent).join('/')}`);
     need(tip, `dispatch target ${name} does not exist in ${i.repository}`);
