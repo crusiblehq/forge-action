@@ -34707,6 +34707,18 @@ function checkRelPath(p) {
     }
     return p;
 }
+/** A ref that reaches an API path: no dot segments, no leading slash or `refs/`, no control or space characters. */
+function checkRef(r) {
+    const parts = r.split('/');
+    if (!r ||
+        r.startsWith('refs/') ||
+        r.includes('\\') ||
+        [...r].some((c) => c <= ' ' || c === '\x7f') ||
+        parts.some((s) => s === '..' || s === '.' || s === '')) {
+        throw new Unreadable(`ref rejected: ${r}`);
+    }
+    return r;
+}
 function writeUnder(dest, rel, bytes) {
     checkRelPath(rel);
     const root = resolve(dest);
@@ -34916,6 +34928,7 @@ async function files(api, i) {
 async function ref(api, i) {
     if (!i.ref)
         throw new Unreadable('ref needs ref');
+    checkRef(i.ref);
     const name = /^(heads|tags)\//.test(i.ref) ? i.ref : `heads/${i.ref}`;
     const d = await api.read(`/repos/${i.repository}/git/ref/${enc(name)}`);
     if (!d)

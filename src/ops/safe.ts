@@ -18,6 +18,21 @@ export function checkRelPath(p: string): string {
   return p
 }
 
+/** A ref that reaches an API path: no dot segments, no leading slash or `refs/`, no control or space characters. */
+export function checkRef(r: string): string {
+  const parts = r.split('/')
+  if (
+    !r ||
+    r.startsWith('refs/') ||
+    r.includes('\\') ||
+    [...r].some((c) => c <= ' ' || c === '\x7f') ||
+    parts.some((s) => s === '..' || s === '.' || s === '')
+  ) {
+    throw new Unreadable(`ref rejected: ${r}`)
+  }
+  return r
+}
+
 export function writeUnder(dest: string, rel: string, bytes: Uint8Array): string {
   checkRelPath(rel)
   const root = resolve(dest)

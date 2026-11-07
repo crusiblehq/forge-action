@@ -75,6 +75,15 @@ it('ref: recorded main, recorded 404, tags prefix', async () => {
   expect(tag.code).toBe(0)
 })
 
+it.each(['heads/a/../../../../orgs/x', '/etc', 'refs/heads/x', 'a//b', 'a/./b', 'a b'])(
+  'ref rejects %s',
+  async (bad) => {
+    const r = await exec('ref', { ref: bad }, {})
+    expect(r.code).toBe(1)
+    expect(r.verdict.verdict).toBe('unreadable')
+  }
+)
+
 it('403 on a read is unreadable, not absent', async () => {
   const r = await exec(
     'ref',
