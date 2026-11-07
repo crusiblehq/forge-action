@@ -6,6 +6,7 @@ import { FILE_CAP, checkRelPath, writeUnder } from './safe.js'
 import { list, type OpInputs } from './shared.js'
 
 const SHA = /^[0-9a-f]{40}$/
+const FILES_CAP = 300
 const need = (cond: unknown, msg: string): void => {
   if (!cond) throw new Unreadable(msg)
 }
@@ -21,7 +22,8 @@ export async function commit(api: Api, i: OpInputs) {
     sha: f.sha,
     from: f.previous_filename
   }))
-  // the API lists at most 300 files on this call; flag a possibly cut list
+  // the API lists at most 300 files on this call: a full page may be a cut list, and a cut list is a failure, never a result
+  need(files.length < FILES_CAP, `commit lists ${files.length} files, the API cap: the list may be truncated`)
   return {
     verdict: 'ok',
     sha: d.sha,
@@ -29,7 +31,6 @@ export async function commit(api: Api, i: OpInputs) {
     parents: d.parents.map((p: { sha: string }) => p.sha),
     message: d.commit.message,
     files,
-    truncated: files.length >= 300,
     ok: true
   }
 }
