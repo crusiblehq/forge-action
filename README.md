@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: crusiblehq/forge-action@v1 # prefer the full commit SHA, see "Pinning"
-        with: { workflow: ci.yml, mode: '${{ vars.CI_MODE }}' }
+        with: { workflow: ci.yml, mode: '${{ vars.CI_MODE }}', token: '${{ github.token }}' }
 ```
 
 Your heavy workflow needs the dispatch trigger. The `pr` and `failfast` inputs are sent by default and may be renamed or switched off:
@@ -43,6 +43,7 @@ All six modes enabled (the default), a bypass for pod 0 urgent work, and caps fr
 - uses: crusiblehq/forge-action@v1
   with:
     workflow: ci.yml
+    token: ${{ github.token }}
     mode: ${{ vars.CI_MODE }}
     bypass-labels: pod:crusible-dev-0+priority:urgent
     limit-by-label: ${{ vars.CI_LIMIT_BY_LABEL }}
@@ -114,26 +115,26 @@ a 422 naming unexpected inputs redispatches once without them). Each sets the ou
 
 ## Inputs
 
-| Input              | Default               | Meaning                                                                  |
-| ------------------ | --------------------- | ------------------------------------------------------------------------ |
-| `workflow`         | required              | Workflow file name or id to dispatch                                     |
-| `mode`             | empty (FULL_AHEAD)    | Pass `${{ vars.CI_MODE }}`                                               |
-| `enabled-modes`    | all six               | Comma list of modes in use, case-insensitive; empty is an error          |
-| `bypass-labels`    | empty                 | `,` OR, `+` AND                                                          |
-| `limit-by-label`   | empty                 | JSON caps; pass `${{ vars.CI_LIMIT_BY_LABEL }}`                          |
-| `on-count-error`   | `hold`                | `hold` or `dispatch` when the count cannot be read                       |
-| `ref`              | PR head branch        | Ref to dispatch; the moved-head check always uses the PR head branch     |
-| `dispatch-inputs`  | `{}`                  | JSON merged into the dispatch inputs                                     |
-| `pr-input`         | `pr`                  | Dispatch input that receives the PR number; empty = not sent             |
-| `failfast-input`   | `failfast`            | Dispatch input that receives `true`/`false`; empty = not sent            |
-| `failfast-modes`   | `SLOW_AHEAD`          | Modes that set failfast                                                  |
-| `runs-on-input`    | empty                 | Dispatch input that receives the runner hint (JSON); empty = not sent    |
-| `runs-on-default`  | empty                 | Runner hint normally                                                     |
-| `runs-on-overflow` | empty                 | Runner hint in `DEAD_SLOW`                                               |
-| `held-label`       | empty                 | Label added on hold, removed on dispatch. Needs `pull-requests: write`   |
-| `dedupe`           | `true`                | Skip when a dispatched run for this head SHA is queued, running or green |
-| `dry-run`          | `false`               | Decide and report only                                                   |
-| `token`            | `${{ github.token }}` | Leave the default                                                        |
+| Input              | Default            | Meaning                                                                  |
+| ------------------ | ------------------ | ------------------------------------------------------------------------ |
+| `workflow`         | required           | Workflow file name or id to dispatch                                     |
+| `mode`             | empty (FULL_AHEAD) | Pass `${{ vars.CI_MODE }}`                                               |
+| `enabled-modes`    | all six            | Comma list of modes in use, case-insensitive; empty is an error          |
+| `bypass-labels`    | empty              | `,` OR, `+` AND                                                          |
+| `limit-by-label`   | empty              | JSON caps; pass `${{ vars.CI_LIMIT_BY_LABEL }}`                          |
+| `on-count-error`   | `hold`             | `hold` or `dispatch` when the count cannot be read                       |
+| `ref`              | PR head branch     | Ref to dispatch; the moved-head check always uses the PR head branch     |
+| `dispatch-inputs`  | `{}`               | JSON merged into the dispatch inputs                                     |
+| `pr-input`         | `pr`               | Dispatch input that receives the PR number; empty = not sent             |
+| `failfast-input`   | `failfast`         | Dispatch input that receives `true`/`false`; empty = not sent            |
+| `failfast-modes`   | `SLOW_AHEAD`       | Modes that set failfast                                                  |
+| `runs-on-input`    | empty              | Dispatch input that receives the runner hint (JSON); empty = not sent    |
+| `runs-on-default`  | empty              | Runner hint normally                                                     |
+| `runs-on-overflow` | empty              | Runner hint in `DEAD_SLOW`                                               |
+| `held-label`       | empty              | Label added on hold, removed on dispatch. Needs `pull-requests: write`   |
+| `dedupe`           | `true`             | Skip when a dispatched run for this head SHA is queued, running or green |
+| `dry-run`          | `false`            | Decide and report only                                                   |
+| `token`            | required           | Pass `${{ github.token }}` explicitly; there is no default               |
 
 ## Outputs
 
