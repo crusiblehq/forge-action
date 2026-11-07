@@ -1,0 +1,29 @@
+{
+  "sha": "732b68254b3cb32a689fb9f189872fef2bca6434",
+  "node_id": "C_kwDOVjWX8NoAKDczMmI2ODI1NGIzY2IzMmE2ODlmYjlmMTg5ODcyZmVmMmJjYTY0MzQ",
+  "url": "https://api.github.com/repos/crusiblehq/forge-action/git/commits/732b68254b3cb32a689fb9f189872fef2bca6434",
+  "html_url": "https://github.com/crusiblehq/forge-action/commit/732b68254b3cb32a689fb9f189872fef2bca6434",
+  "author": {
+    "name": "Mani Ka",
+    "email": "manquer@users.noreply.github.com",
+    "date": "2026-11-05T00:31:15Z"
+  },
+  "committer": {
+    "name": "GitHub",
+    "email": "noreply@github.com",
+    "date": "2026-11-05T00:31:15Z"
+  },
+  "tree": {
+    "sha": "8f57a99980891ccc68701b94b94342f7ae0e02d6",
+    "url": "https://api.github.com/repos/crusiblehq/forge-action/git/trees/8f57a99980891ccc68701b94b94342f7ae0e02d6"
+  },
+  "message": "Initial commit",
+  "parents": [],
+  "verification": {
+    "verified": true,
+    "reason": "valid",
+    "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJq685TCRC1aQ7uu5UhlAAAmXYQADTtNjJMyp7LAHRFEWabfL4+\nP3Jj0PfJ+CQiRieJund90/KRdKinWRkeMRGIYrs9B5U2j0uEUT4sSf5MqYfUaEsZ\nyEXfVLCjuYl1w2q4Qic+4JHAGtc04mVobYl12XK83ZAEiiTg+GzhnIX+UHeni8jM\nY2xUIEm0tyyWjIr781qkQ4i34oTeB5u1lygNHrF3qatknsi2Noqp2nz7+sSiFpgG\n+I3d5WUfAKJYmyWapC90TRNZboBh+NS2TQP+cBJ91OSP9F+9PXqtVzZXePIYD2/e\n8x1i8rW86ybAQN53GMEML8uY1NmefGMjxanBkJ3+VhtRTshfwIgB95p3crMDiPpV\nV9Y4h82Kwqvgo3QnwjN8CrwzRxKBrkVz4pa1ee7hJpPGMc3ZIJBLVH+zZ+RmK3Pi\nrof1yrhefwXWhvhgoZjf8p7e1TjXG5jZirH5rp+F+cQbvAq3WWwE7aFcZeo9dwIv\n6698lPkbUirNX9Ckb/SKvokojZwl+F7ev2tJlVXPUu7mhDiEmpfNvlHlpmkJFCC/\nZP/5fCk95hPaCL8Ngtq4jAQ59ztmNE0CofAH8lLsBKR8flX+roZ8ECFf43dUKNSy\nDhonTAEWjW/T6gUuCPiq3wEue1/9OPE8MIih6WMEPe3zNbTYHFqeBxCVtg5L4uvp\nf5VeeIZksvNzn7FUScHZ\n=3V3q\n-----END PGP SIGNATURE-----\n",
+    "payload": "tree 8f57a99980891ccc68701b94b94342f7ae0e02d6\nauthor Mani Ka <manquer@users.noreply.github.com> 1793838675 +0000\ncommitter GitHub <noreply@github.com> 1793838675 +0000\n\nInitial commit",
+    "verified_at": "2026-11-05T00:31:16Z"
+  }
+}

@@ -8,7 +8,7 @@ branding:
 inputs:
   op:
     description: >-
-      Run one GitHub operation instead of the gate: status, label or dispatch (more in later releases). Empty = gate mode.
+      Run one GitHub operation instead of the gate: status, label, dispatch, files, ref, commit, tree, blob, pulls, runs or runners. Empty = gate mode.
       Op mode uses the token, workflow, ref, repository, pr and the inputs below, and sets the outputs verdict and ok.
     required: false
     default: ''
@@ -17,11 +17,11 @@ inputs:
     required: false
     default: ''
   pr:
-    description: Pull request number (op label, dispatch).
+    description: Pull request number (op label, dispatch, pulls).
     required: false
     default: ''
   sha:
-    description: Commit sha (op status).
+    description: Commit, tree or blob sha (op status, commit, tree, runs head_sha).
     required: false
     default: ''
   state:
@@ -45,7 +45,7 @@ inputs:
     required: false
     default: ''
   labels:
-    description: Labels to add (op label).
+    description: 'op label: labels to add. runners: labels to count.'
     required: false
     default: ''
   remove-labels:
@@ -58,6 +58,46 @@ inputs:
     default: ''
   gates:
     description: One string input sent as inputs.gates, at most 4096 bytes (op dispatch).
+    required: false
+    default: ''
+  paths:
+    description: 'op files: repository paths. tree: path prefixes to keep. blob: lines of path=blobsha. Comma or newline list.'
+    required: false
+    default: ''
+  dest:
+    description: Directory the files and blob ops write under.
+    required: false
+    default: ''
+  event:
+    description: Event filter (op runs).
+    required: false
+    default: ''
+  status:
+    description: Run status filter (op runs).
+    required: false
+    default: ''
+  base:
+    description: Base branch filter (op pulls list).
+    required: false
+    default: ''
+  recursive:
+    description: op tree only. true reads a subtree recursively; refused on a commit sha.
+    required: false
+    default: ''
+  max-entries:
+    description: op tree only. Fail when the tree has more entries. Default 3000.
+    required: false
+    default: ''
+  max-pages:
+    description: op pulls list, runs, runners. Fail when more than this many pages of 100.
+    required: false
+    default: ''
+  cache:
+    description: op blob only. Directory keyed by blob sha, shared across steps, so a sha is fetched once per pass.
+    required: false
+    default: ''
+  scope:
+    description: op runners only. org (default, needs administration read) or repo.
     required: false
     default: ''
   retry-unknown-inputs:

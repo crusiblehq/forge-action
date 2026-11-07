@@ -1,4 +1,4 @@
-import { readFileSync as readFileSync$1 } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync as existsSync$1, readFileSync as readFileSync$1 } from 'node:fs';
 import * as os from 'os';
 import os__default, { EOL } from 'os';
 import * as crypto from 'crypto';
@@ -33,6 +33,7 @@ import require$$1$5 from 'node:dns';
 import require$$5$3 from 'string_decoder';
 import 'child_process';
 import 'timers';
+import { resolve, sep as sep$1, dirname, join } from 'node:path';
 
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -34685,7 +34686,7 @@ const list = (raw) => raw
 const scrub = (text, token) => (token ? text.split(token).join('***') : text);
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 const NUM = /^\d+$/;
-const SHA = /^[0-9a-f]{40}$/;
+const SHA$1 = /^[0-9a-f]{40}$/;
 /** Reject repository and pr values that would be spliced into an API path: they could retarget the token. A sha is checked by the op that puts it in a path. */
 function validate(i) {
     if (!REPO.test(i.repository) || i.repository.split('/').some((p) => p === '.' || p === '..'))
@@ -34694,13 +34695,240 @@ function validate(i) {
         throw new Error(`bad pr: ${JSON.stringify(i.pr)}`);
 }
 
+// Path and size guards shared by the file-fetching ops.
+const FILE_CAP = 1024 * 1024;
+function checkRelPath(p) {
+    const parts = p.split('/');
+    if (!p ||
+        p.startsWith('/') ||
+        p.includes('\\') ||
+        parts.some((s) => s === '..' || s === '.' || s === '' || s === '.git')) {
+        throw new Unreadable(`path rejected: ${p}`);
+    }
+    return p;
+}
+function writeUnder(dest, rel, bytes) {
+    checkRelPath(rel);
+    const root = resolve(dest);
+    const target = resolve(root, rel);
+    if (!target.startsWith(root + sep$1))
+        throw new Unreadable(`path escapes dest: ${rel}`);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, bytes);
+    return target;
+}
+
+// Git data reads: commit, tree, blob. Trees and blobs, never a tarball.
+const SHA = /^[0-9a-f]{40}$/;
+const need = (cond, msg) => {
+    if (!cond)
+        throw new Unreadable(msg);
+};
+async function commit(api, i) {
+    need(SHA.test(i.sha ?? ''), 'commit needs a 40-hex sha');
+    const d = await api.read(`/repos/${i.repository}/commits/${i.sha}`);
+    if (!d)
+        return { verdict: 'absent', ok: false };
+    const files = (d.files ?? []).map((f) => ({
+        path: f.filename,
+        status: f.status,
+        sha: f.sha,
+        from: f.previous_filename
+    }));
+    // the API lists at most 300 files on this call; flag a possibly cut list
+    return {
+        verdict: 'ok',
+        sha: d.sha,
+        tree: d.commit.tree.sha,
+        parents: d.parents.map((p) => p.sha),
+        message: d.commit.message,
+        files,
+        truncated: files.length >= 300,
+        ok: true
+    };
+}
+async function tree(api, i) {
+    need(SHA.test(i.sha ?? ''), 'tree needs a 40-hex sha');
+    const recursive = i.recursive === 'true';
+    const max = Number(i['max-entries'] || 3000);
+    if (recursive) {
+        // recursion is for subtrees: a commit sha (a root) is refused
+        const isCommit = await api.read(`/repos/${i.repository}/git/commits/${i.sha}`);
+        need(!isCommit, 'recursive tree refused on a commit (root) sha; walk to the subtree first');
+    }
+    const d = await api.read(`/repos/${i.repository}/git/trees/${i.sha}`, { query: recursive ? { recursive: 1 } : {} });
+    if (!d)
+        return { verdict: 'absent', ok: false };
+    need(!d.truncated, 'tree truncated by the API');
+    need(d.tree.length <= max, `tree has ${d.tree.length} entries, above ${max}`);
+    const prefixes = list(i.paths ?? '');
+    const keep = (e) => !prefixes.length || prefixes.some((p) => e.path === p || e.path.startsWith(`${p}/`));
+    const entries = d.tree
+        .filter(keep)
+        .map((e) => ({ path: e.path, type: e.type, mode: e.mode, sha: e.sha, size: e.size }));
+    return { verdict: 'ok', sha: d.sha, entries, ok: true };
+}
+// paths: lines "<relative path>=<blob sha>". Fetch each sha once (a shared `cache` dir spans steps), 8 at a time.
+async function blob(api, i) {
+    need(i.dest, 'blob needs dest');
+    const dest = i.dest;
+    const pairs = list(i.paths ?? '').map((l) => {
+        const [path, sha] = l.split('=');
+        need(path && SHA.test(sha ?? ''), `blob pair must be path=sha: ${l}`);
+        return [checkRelPath(path), sha];
+    });
+    need(pairs.length, 'blob needs paths');
+    const bytes = new Map();
+    const fetchOne = async (sha) => {
+        const cached = i.cache ? join(i.cache, sha) : '';
+        if (cached && existsSync$1(cached))
+            return readFileSync$1(cached);
+        const d = await api.read(`/repos/${i.repository}/git/blobs/${sha}`);
+        need(d, `blob ${sha} absent`);
+        need(d.size <= FILE_CAP, `blob ${sha}: ${d.size} bytes above the ${FILE_CAP} cap`);
+        const b = Buffer.from(d.content, d.encoding === 'base64' ? 'base64' : 'utf8');
+        if (cached) {
+            mkdirSync(i.cache, { recursive: true });
+            writeFileSync(cached, b);
+        }
+        return b;
+    };
+    const shas = [...new Set(pairs.map((p) => p[1]))];
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(8, shas.length) }, async () => {
+        while (next < shas.length) {
+            const s = shas[next++];
+            bytes.set(s, await fetchOne(s));
+        }
+    }));
+    for (const [path, sha] of pairs)
+        writeUnder(dest, path, bytes.get(sha));
+    return { verdict: 'ok', written: pairs.length, fetched: shas.length, ok: true };
+}
+
+// List reads: pulls, runs, runners. Reduced to the fields the dispatch pass uses.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+async function pages(api, path, query, key, max) {
+    const out = [];
+    for (let page = 1; page <= max; page++) {
+        const d = await api.read(path, { query: { ...query, per_page: 100, page } });
+        if (!d)
+            throw new Unreadable(`GET ${path}: not found`);
+        const rows = key ? d[key] : d;
+        out.push(...rows);
+        if (rows.length < 100)
+            return out;
+    }
+    throw new Unreadable(`GET ${path}: more than ${max} pages`);
+}
+const pr = (p) => ({
+    number: p.number,
+    state: p.state,
+    merged: !!p.merged,
+    draft: p.draft,
+    head_sha: p.head.sha,
+    head_ref: p.head.ref,
+    head_repo: p.head.repo?.full_name ?? null,
+    base_ref: p.base.ref,
+    mergeable: p.mergeable ?? null,
+    mergeable_state: p.mergeable_state ?? null,
+    labels: p.labels.map((l) => l.name)
+});
+// `pr` reads one pull request (state, heads, mergeable); otherwise lists by `state` (open) and `base`.
+async function pulls(api, i) {
+    if (i.pr) {
+        const d = await api.read(`/repos/${i.repository}/pulls/${i.pr}`);
+        return d ? { verdict: 'ok', pull: pr(d), ok: true } : { verdict: 'absent', ok: false };
+    }
+    const query = { state: i.state || 'open', ...(i.base ? { base: i.base } : {}) };
+    const rows = await pages(api, `/repos/${i.repository}/pulls`, query, null, Number(i['max-pages'] || 5));
+    return { verdict: 'ok', pulls: rows.map(pr), ok: true };
+}
+async function runs(api, i) {
+    const q = {
+        ...(i.sha ? { head_sha: i.sha } : {}),
+        ...(i.ref ? { branch: i.ref } : {}),
+        ...(i.event ? { event: i.event } : {}),
+        ...(i.status ? { status: i.status } : {})
+    };
+    const path = i.workflow
+        ? `/repos/${i.repository}/actions/workflows/${encodeURIComponent(i.workflow)}/runs`
+        : `/repos/${i.repository}/actions/runs`;
+    const rows = await pages(api, path, q, 'workflow_runs', Number(i['max-pages'] || 3));
+    const out = rows.map((r) => ({
+        id: r.id,
+        attempt: r.run_attempt,
+        status: r.status,
+        conclusion: r.conclusion,
+        head_sha: r.head_sha,
+        head_branch: r.head_branch,
+        event: r.event,
+        actor: r.actor?.login ?? null,
+        created_at: r.created_at
+    }));
+    return { verdict: 'ok', runs: out, ok: true };
+}
+// scope=org (default) reads the owner's runners, scope=repo the repository's. `labels` selects the counted labels.
+async function runners(api, i) {
+    const org = i.repository.split('/')[0];
+    const path = i.scope === 'repo' ? `/repos/${i.repository}/actions/runners` : `/orgs/${org}/actions/runners`;
+    const rows = await pages(api, path, {}, 'runners', Number(i['max-pages'] || 5));
+    const tally = (rs) => ({
+        total: rs.length,
+        online: rs.filter((r) => r.status === 'online').length,
+        busy: rs.filter((r) => r.status === 'online' && r.busy).length,
+        idle: rs.filter((r) => r.status === 'online' && !r.busy).length
+    });
+    const by_label = {};
+    for (const l of list(i.labels ?? ''))
+        by_label[l] = tally(rows.filter((r) => r.labels.some((x) => x.name === l)));
+    return { verdict: 'ok', ...tally(rows), by_label, ok: true };
+}
+
+// Read ops: files, ref.
+const enc = (p) => p.split('/').map(encodeURIComponent).join('/');
+async function files(api, i) {
+    const paths = list(i.paths ?? '');
+    if (!paths.length || (!i.sha && !i.ref))
+        throw new Unreadable('files needs paths and sha or ref');
+    if (!i.dest)
+        throw new Unreadable('files needs dest');
+    const out = [];
+    for (const p of paths) {
+        checkRelPath(p);
+        const d = await api.read(`/repos/${i.repository}/contents/${enc(p)}`, { query: { ref: i.sha || i.ref } });
+        if (d === null) {
+            out.push({ path: p, found: false });
+            continue;
+        }
+        if (Array.isArray(d) || d.type !== 'file')
+            throw new Unreadable(`not a file: ${p}`);
+        if (d.size > FILE_CAP)
+            throw new Unreadable(`${p}: ${d.size} bytes above the ${FILE_CAP} cap`);
+        writeUnder(i.dest, p, Buffer.from(d.content ?? '', 'base64'));
+        out.push({ path: p, found: true, size: d.size, sha: d.sha });
+    }
+    const ok = out.every((f) => f.found);
+    return { verdict: ok ? 'ok' : 'absent', files: out, ok };
+}
+// ref: "heads/<branch>" or "tags/<tag>"; a bare name is a branch.
+async function ref(api, i) {
+    if (!i.ref)
+        throw new Unreadable('ref needs ref');
+    const name = /^(heads|tags)\//.test(i.ref) ? i.ref : `heads/${i.ref}`;
+    const d = await api.read(`/repos/${i.repository}/git/ref/${enc(name)}`);
+    if (!d)
+        return { verdict: 'absent', ok: false };
+    return { verdict: 'ok', sha: d.object.sha, type: d.object.type, ok: true };
+}
+
 // Write ops: status, label, dispatch.
 const GATES_MAX = 4096;
 const STATES = ['pending', 'success', 'failure', 'error'];
 async function status(api, i, { sleep }) {
     if (!i.sha || !i.context)
         throw new Unreadable('status needs sha and context');
-    if (!SHA.test(i.sha))
+    if (!SHA$1.test(i.sha))
         throw new Unreadable(`bad sha: ${JSON.stringify(i.sha)}`);
     if (!i.state) {
         // read: latest state of one context at sha, optionally polling in three equal steps
@@ -34784,7 +35012,19 @@ async function dispatch$1(api, i, { log }) {
 }
 
 // Op mode: one GitHub operation per step on a caller-supplied token. Never mints or prints the token.
-const OPS = { status: status, label: label, dispatch: dispatch$1 };
+const OPS = {
+    status: status,
+    label: label,
+    dispatch: dispatch$1,
+    files: files,
+    ref: ref,
+    commit: commit,
+    tree: tree,
+    blob: blob,
+    pulls: pulls,
+    runs: runs,
+    runners: runners
+};
 const OP_INPUTS = [
     'op',
     'token',

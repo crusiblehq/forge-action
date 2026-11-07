@@ -1,0 +1,33 @@
+{
+  "total_count": 4,
+  "runners": [
+    {
+      "id": 1,
+      "name": "crusible-runner-1",
+      "status": "online",
+      "busy": true,
+      "labels": [{ "name": "self-hosted" }, { "name": "crusible-ci" }, { "name": "crusible-host" }]
+    },
+    {
+      "id": 2,
+      "name": "crusible-runner-2",
+      "status": "online",
+      "busy": false,
+      "labels": [{ "name": "self-hosted" }, { "name": "crusible-ci" }, { "name": "crusible-host" }]
+    },
+    {
+      "id": 3,
+      "name": "arc-1",
+      "status": "online",
+      "busy": false,
+      "labels": [{ "name": "self-hosted" }, { "name": "crusible-ci" }, { "name": "crusible-ci-k8s" }]
+    },
+    {
+      "id": 4,
+      "name": "crusible-runner-3",
+      "status": "offline",
+      "busy": false,
+      "labels": [{ "name": "self-hosted" }, { "name": "crusible-ci" }, { "name": "crusible-host" }]
+    }
+  ]
+}
