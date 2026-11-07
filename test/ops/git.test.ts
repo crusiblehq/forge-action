@@ -19,10 +19,10 @@ it('commit: parents, message and per-file status from the recorded commit', asyn
   expect(r.verdict.files.map((f: { path: string; status: string }) => [f.path, f.status])).toEqual([
     ['LICENSE', 'added']
   ])
-  expect(r.verdict.truncated).toBe(false)
+  expect(r.verdict.truncated).toBeUndefined()
 })
 
-it('commit: bad sha makes no call; 404 absent; 300 files flagged truncated', async () => {
+it('commit: bad sha makes no call; 404 absent; 300 files fail rather than truncate', async () => {
   const bad = await exec('commit', { sha: 'main' }, {})
   expect(bad.code).toBe(1)
   expect(bad.calls.length).toBe(0)
@@ -31,7 +31,13 @@ it('commit: bad sha makes no call; 404 absent; 300 files flagged truncated', asy
   const c = fixture('commit-initial.json')
   c.files = Array.from({ length: 300 }, (_, n) => ({ filename: `f${n}`, status: 'added', sha: L }))
   const big = await exec('commit', { sha: C }, { [`GET /repos/o/r/commits/${C}`]: { status: 200, body: c } })
-  expect(big.verdict.truncated).toBe(true)
+  expect(big.code).toBe(1)
+  expect(big.verdict.verdict).toBe('unreadable')
+  expect(big.verdict.why).toMatch(/may be truncated/)
+  c.files = c.files.slice(0, 299)
+  const edge = await exec('commit', { sha: C }, { [`GET /repos/o/r/commits/${C}`]: { status: 200, body: c } })
+  expect(edge.code).toBe(0)
+  expect(edge.verdict.files.length).toBe(299)
 })
 
 it('tree: non-recursive root from the recorded tree, path-filtered', async () => {
