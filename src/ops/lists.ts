@@ -3,7 +3,7 @@ import { Unreadable, type Api } from './api.js'
 import { list, type OpInputs } from './shared.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-async function pages(
+export async function pages(
   api: Api,
   path: string,
   query: Record<string, string>,

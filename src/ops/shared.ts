@@ -20,5 +20,6 @@ export const SHA = /^[0-9a-f]{40}$/
 export function validate(i: OpInputs): void {
   if (!REPO.test(i.repository) || i.repository.split('/').some((p) => p === '.' || p === '..'))
     throw new Error(`bad repository: ${JSON.stringify(i.repository)}`)
-  if (i.pr && !NUM.test(i.pr)) throw new Error(`bad pr: ${JSON.stringify(i.pr)}`)
+  for (const k of ['pr', 'run', 'attempt', 'max-runs', 'delay-seconds'])
+    if (i[k] && !NUM.test(i[k]!)) throw new Error(`bad ${k}: ${JSON.stringify(i[k])}`)
 }
