@@ -98,6 +98,13 @@ A JSON array, from a repository variable. Each entry gives a label (an exact nam
 - A count that cannot be read (after two retries) **holds** the pull request (`on-count-error: hold`, the default). A rate limit (429, or a 403 with `x-ratelimit-remaining: 0` or `retry-after`) retries and then holds. A permission refusal (401, 403, 404, 422, GraphQL `FORBIDDEN`) fails the step at once and names the missing permission.
 - This pull request is always counted as itself, even if the read omits it. More than 500 ready pull requests under one label hold (`cap-read-failed`).
 
+## Operations (`op`)
+
+Set `op` to run one GitHub operation instead of the gate. The token is the single `token` input; the action never mints or prints it.
+Ops: `status` (write or read a commit status), `label` (add and remove PR labels), `dispatch` (workflow dispatch with `pr` and `gates`;
+a 422 naming unexpected inputs redispatches once without them). Each sets the outputs `verdict` (JSON) and `ok`.
+5xx, 429 and secondary rate limits retry with `Retry-After`; a 4xx is never retried; a run stops after 250 API calls.
+
 ## Known limits in v1
 
 - **Held-label release is not built.** `held-label` marks a held pull request and clears on dispatch, but a `closed`, `converted_to_draft` or `unlabeled` event does not dispatch the lowest held pull request (SPEC 3.2.5). A held pull request runs on its next event: push, relabel or ready.

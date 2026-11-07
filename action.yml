@@ -6,9 +6,67 @@ branding:
   color: orange
 
 inputs:
+  op:
+    description: >-
+      Run one GitHub operation instead of the gate: status, label or dispatch (more in later releases). Empty = gate mode.
+      Op mode uses the token, workflow, ref, repository, pr and the inputs below, and sets the outputs verdict and ok.
+    required: false
+    default: ''
+  repository:
+    description: owner/name for an op. Default is the running repository.
+    required: false
+    default: ''
+  pr:
+    description: Pull request number (op label, dispatch).
+    required: false
+    default: ''
+  sha:
+    description: Commit sha (op status).
+    required: false
+    default: ''
+  state:
+    description: 'op status: pending, success, failure or error. Empty = read the context.'
+    required: false
+    default: ''
+  context:
+    description: Commit status context (op status).
+    required: false
+    default: ''
+  description:
+    description: Commit status description, cut at 140 characters (op status).
+    required: false
+    default: ''
+  target-url:
+    description: Commit status target URL (op status).
+    required: false
+    default: ''
+  wait-seconds:
+    description: op status read only. Poll up to this many seconds, in three equal steps.
+    required: false
+    default: ''
+  labels:
+    description: Labels to add (op label).
+    required: false
+    default: ''
+  remove-labels:
+    description: Labels to remove (op label).
+    required: false
+    default: ''
+  inputs:
+    description: JSON object of workflow_dispatch inputs (op dispatch).
+    required: false
+    default: ''
+  gates:
+    description: One string input sent as inputs.gates, at most 4096 bytes (op dispatch).
+    required: false
+    default: ''
+  retry-unknown-inputs:
+    description: op dispatch only. On a 422 naming unexpected inputs, redispatch once without them. Set false to disable.
+    required: false
+    default: 'true'
   workflow:
-    description: File name or id of the workflow to dispatch, for example ci.yml. It needs an on.workflow_dispatch trigger.
-    required: true
+    description: File name or id of the workflow to dispatch, for example ci.yml. It needs an on.workflow_dispatch trigger. Required in gate mode and for op dispatch.
+    required: false
   mode:
     description: >-
       The CI mode, from a repo or org variable. One of FULL_AHEAD, HALF_AHEAD, SLOW_AHEAD,
@@ -38,7 +96,7 @@ inputs:
     required: false
     default: 'hold'
   ref:
-    description: Ref to dispatch. Default is the pull request head branch (same-repository pull requests only).
+    description: Ref to dispatch (op dispatch requires it). Gate-mode default is the pull request head branch (same-repository pull requests only).
     required: false
     default: ''
   dispatch-inputs:
@@ -91,6 +149,10 @@ inputs:
     default: ${{ github.token }}
 
 outputs:
+  verdict:
+    description: Op mode. JSON verdict; always has "verdict" (ok, absent or unreadable).
+  ok:
+    description: Op mode. true when the op succeeded and found what it asked for.
   decision:
     description: dispatch, hold or skip.
   reason:
