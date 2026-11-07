@@ -11268,11 +11268,11 @@ function requireRedirectInterceptor () {
 	return redirectInterceptor;
 }
 
-var client;
+var client$1;
 var hasRequiredClient;
 
 function requireClient () {
-	if (hasRequiredClient) return client;
+	if (hasRequiredClient) return client$1;
 	hasRequiredClient = 1;
 
 	const assert = require$$0$1;
@@ -11892,8 +11892,8 @@ function requireClient () {
 	  }
 	}
 
-	client = Client;
-	return client;
+	client$1 = Client;
+	return client$1;
 }
 
 /* eslint-disable */
@@ -28992,6 +28992,38 @@ var ExitCode;
     ExitCode[ExitCode["Failure"] = 1] = "Failure";
 })(ExitCode || (ExitCode = {}));
 /**
+ * Registers a secret which will get masked from logs
+ *
+ * @param secret - Value of the secret to be masked
+ * @remarks
+ * This function instructs the Actions runner to mask the specified value in any
+ * logs produced during the workflow run. Once registered, the secret value will
+ * be replaced with asterisks (***) whenever it appears in console output, logs,
+ * or error messages.
+ *
+ * This is useful for protecting sensitive information such as:
+ * - API keys
+ * - Access tokens
+ * - Authentication credentials
+ * - URL parameters containing signatures (SAS tokens)
+ *
+ * Note that masking only affects future logs; any previous appearances of the
+ * secret in logs before calling this function will remain unmasked.
+ *
+ * @example
+ * ```typescript
+ * // Register an API token as a secret
+ * const apiToken = "abc123xyz456";
+ * setSecret(apiToken);
+ *
+ * // Now any logs containing this value will show *** instead
+ * console.log(`Using token: ${apiToken}`); // Outputs: "Using token: ***"
+ * ```
+ */
+function setSecret(secret) {
+    issueCommand('add-mask', {}, secret);
+}
+/**
  * Gets the value of an input.
  * Unless trimWhitespace is set to false in InputOptions, the value is also trimmed.
  * Returns an empty string if the value is not defined.
@@ -34574,6 +34606,224 @@ function decide(i) {
     return { decision: 'dispatch', reason: how, failfast };
 }
 
+// REST client for the op mode: bounded retries (5xx, 429, secondary rate limit with Retry-After), a call budget, fail closed.
+class Unreadable extends Error {
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function client({ token, fetchImpl = globalThis.fetch, base = 'https://api.github.com', budget = 250, wait = sleep, retries = 3 }) {
+    let calls = 0;
+    async function request(method, path, { body, query } = {}) {
+        const url = new URL(base + path);
+        for (const [k, v] of Object.entries(query ?? {}))
+            url.searchParams.set(k, String(v));
+        for (let attempt = 0;; attempt++) {
+            if (++calls > budget)
+                throw new Unreadable(`call budget ${budget} exhausted`);
+            let res;
+            try {
+                res = await fetchImpl(url, {
+                    method,
+                    headers: {
+                        authorization: `Bearer ${token}`,
+                        accept: 'application/vnd.github+json',
+                        'x-github-api-version': '2022-11-28',
+                        'user-agent': 'crusiblehq-forge-action',
+                        ...(body === undefined ? {} : { 'content-type': 'application/json' })
+                    },
+                    body: body === undefined ? undefined : JSON.stringify(body)
+                });
+            }
+            catch (e) {
+                if (attempt < retries) {
+                    await wait(500 * 2 ** attempt);
+                    continue;
+                }
+                throw new Unreadable(`network: ${e.message}`);
+            }
+            const secondary = res.status === 429 || (res.status === 403 && res.headers.get('retry-after') !== null);
+            if (res.status >= 500 || secondary) {
+                if (attempt >= retries)
+                    throw new Unreadable(`${method} ${path}: HTTP ${res.status} after ${attempt + 1} tries`);
+                const ra = Number(res.headers.get('retry-after'));
+                await wait(ra > 0 ? ra * 1000 : 500 * 2 ** attempt);
+                continue;
+            }
+            const text = await res.text();
+            let data = null;
+            if (text) {
+                try {
+                    data = JSON.parse(text);
+                }
+                catch {
+                    data = text;
+                }
+            }
+            return { status: res.status, data };
+        }
+    }
+    // 404 is absent (null); any other non-2xx is unreadable.
+    async function read(path, o) {
+        const r = await request('GET', path, o);
+        if (r.status === 404)
+            return null;
+        if (r.status >= 300)
+            throw new Unreadable(`GET ${path}: HTTP ${r.status} ${r.data?.message ?? ''}`.trim());
+        return r.data;
+    }
+    return { request, read, calls: () => calls };
+}
+
+const list = (raw) => raw
+    .split(/[\n,]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+/** Strip the token from any text before it reaches a log. */
+const scrub = (text, token) => (token ? text.split(token).join('***') : text);
+
+// Write ops: status, label, dispatch.
+const GATES_MAX = 4096;
+const STATES = ['pending', 'success', 'failure', 'error'];
+async function status(api, i, { sleep }) {
+    if (!i.sha || !i.context)
+        throw new Unreadable('status needs sha and context');
+    if (!i.state) {
+        // read: latest state of one context at sha, optionally polling in three equal steps
+        const waitMs = Number(i['wait-seconds'] || 0) * 1000;
+        const step = waitMs > 0 ? waitMs / 3 : 0;
+        for (let waited = 0;; waited += step) {
+            const d = await api.read(`/repos/${i.repository}/commits/${i.sha}/status`, { query: { per_page: 100 } });
+            const hit = d?.statuses?.find((s) => s.context === i.context);
+            if (hit)
+                return { verdict: 'ok', state: hit.state, description: hit.description ?? '', ok: true };
+            if (step === 0 || waited + step > waitMs)
+                return { verdict: 'absent', ok: false };
+            await sleep(step);
+        }
+    }
+    if (!STATES.includes(i.state))
+        throw new Unreadable(`bad state: ${i.state}`);
+    const body = {
+        state: i.state,
+        context: i.context,
+        description: (i.description ?? '').slice(0, 140)
+    };
+    if (i['target-url'])
+        body.target_url = i['target-url'];
+    const r = await api.request('POST', `/repos/${i.repository}/statuses/${i.sha}`, { body });
+    if (r.status !== 201)
+        throw new Unreadable(`status POST: HTTP ${r.status} ${r.data?.message ?? ''}`);
+    return { verdict: 'ok', state: i.state, ok: true };
+}
+async function label(api, i) {
+    if (!i.pr)
+        throw new Unreadable('label needs pr');
+    const add = list(i.labels ?? '');
+    const remove = list(i['remove-labels'] ?? '');
+    if (!add.length && !remove.length)
+        throw new Unreadable('label needs labels or remove-labels');
+    if (add.length) {
+        const r = await api.request('POST', `/repos/${i.repository}/issues/${i.pr}/labels`, { body: { labels: add } });
+        if (r.status >= 300)
+            throw new Unreadable(`label add: HTTP ${r.status} ${r.data?.message ?? ''}`);
+    }
+    for (const l of remove) {
+        const r = await api.request('DELETE', `/repos/${i.repository}/issues/${i.pr}/labels/${encodeURIComponent(l)}`);
+        if (r.status >= 300 && r.status !== 404)
+            throw new Unreadable(`label remove ${l}: HTTP ${r.status}`);
+    }
+    return { verdict: 'ok', added: add, removed: remove, ok: true };
+}
+const unexpected = (msg) => {
+    const m = /Unexpected inputs provided: \[([^\]]*)\]/.exec(msg ?? '');
+    return m ? [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]) : [];
+};
+async function dispatch$1(api, i, { log }) {
+    if (!i.workflow || !i.ref)
+        throw new Unreadable('dispatch needs workflow and ref');
+    const inputs = i.inputs ? JSON.parse(i.inputs) : {};
+    if (i.pr)
+        inputs.pr = String(i.pr);
+    if (i.gates) {
+        if (Buffer.byteLength(i.gates) > GATES_MAX)
+            throw new Unreadable(`gates above ${GATES_MAX} bytes refused`);
+        inputs.gates = i.gates;
+    }
+    const dropped = [];
+    for (;;) {
+        const r = await api.request('POST', `/repos/${i.repository}/actions/workflows/${encodeURIComponent(i.workflow)}/dispatches`, {
+            body: { ref: i.ref, inputs }
+        });
+        if (r.status === 204)
+            return { verdict: 'ok', dropped, ok: true };
+        const names = r.status === 422 ? unexpected(r.data?.message).filter((n) => n in inputs) : [];
+        if (names.length && i['retry-unknown-inputs'] !== 'false' && !dropped.length) {
+            for (const n of names)
+                delete inputs[n];
+            dropped.push(...names);
+            log(`::warning::dispatch retried once without unknown inputs: ${names.join(',')}`);
+            continue;
+        }
+        throw new Unreadable(`dispatch: HTTP ${r.status} ${r.data?.message ?? ''}`);
+    }
+}
+
+// Op mode: one GitHub operation per step on a caller-supplied token. Never mints or prints the token.
+const OPS = { status: status, label: label, dispatch: dispatch$1 };
+const OP_INPUTS = [
+    'op',
+    'token',
+    'repository',
+    'pr',
+    'sha',
+    'ref',
+    'paths',
+    'dest',
+    'state',
+    'context',
+    'description',
+    'target-url',
+    'labels',
+    'remove-labels',
+    'workflow',
+    'inputs',
+    'gates',
+    'wait-seconds',
+    'retry-unknown-inputs',
+    'event',
+    'status',
+    'base',
+    'recursive',
+    'max-entries',
+    'max-pages',
+    'cache',
+    'scope'
+];
+/** Returns the process exit code. */
+async function execOp(env) {
+    const i = Object.fromEntries(OP_INPUTS.map((n) => [n, env.get(n)]));
+    env.mask(i.token);
+    try {
+        if (!i.token)
+            throw new Unreadable('token input is required');
+        i.repository ||= env.repository;
+        const op = OPS[i.op];
+        if (!op)
+            throw new Unreadable(`unknown op: ${i.op}`);
+        const api = client({ token: i.token, ...env.client });
+        const res = await op(api, i, { sleep: env.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))), log: env.log });
+        env.output('verdict', JSON.stringify(res));
+        env.output('ok', String(!!res.ok));
+        return 0;
+    }
+    catch (e) {
+        const msg = scrub(e.message, i.token ?? '');
+        env.error(`${i.op || 'forge-action'}: ${msg}`);
+        env.output('verdict', JSON.stringify({ verdict: 'unreadable', why: msg.slice(0, 200) }));
+        env.output('ok', 'false');
+        return 1;
+    }
+}
+
 const labelNames = (labels) => labels.map((l) => (typeof l === 'string' ? l : (l.name ?? ''))).filter(Boolean);
 const READY_QUERY = `query($owner: String!, $repo: String!, $label: String!, $after: String) {
   repository(owner: $owner, name: $repo) {
@@ -34856,6 +35106,18 @@ function eventPayload(path) {
     return JSON.parse(readFileSync$1(path, 'utf8'));
 }
 async function main() {
+    // `op` selects an operation; empty keeps the gate-and-dispatch mode below.
+    if (getInput('op')) {
+        process.exitCode = await execOp({
+            get: (n) => getInput(n),
+            repository: process.env.GITHUB_REPOSITORY ?? '',
+            mask: (v) => v && setSecret(v),
+            output: (n, v) => setOutput(n, v),
+            error: (m) => error(m),
+            log: (l) => info(l)
+        });
+        return;
+    }
     const payload = eventPayload(getInput('event-path'));
     const pr = payload.pull_request;
     if (!pr)

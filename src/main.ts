@@ -3,6 +3,7 @@ import * as core from '@actions/core'
 import * as github from '@actions/github'
 import type { Gh } from './github.js'
 import { PolicyError } from './policy/index.js'
+import { execOp } from './ops/index.js'
 import { run, summaryRows, type Inputs, type PullRequestPayload } from './run.js'
 
 // Test seam: the runner owns GITHUB_EVENT_PATH, so a self-test names its mocked event here instead.
@@ -12,6 +13,18 @@ function eventPayload(path: string): { pull_request?: unknown } {
 }
 
 async function main(): Promise<void> {
+  // `op` selects an operation; empty keeps the gate-and-dispatch mode below.
+  if (core.getInput('op')) {
+    process.exitCode = await execOp({
+      get: (n) => core.getInput(n),
+      repository: process.env.GITHUB_REPOSITORY ?? '',
+      mask: (v) => v && core.setSecret(v),
+      output: (n, v) => core.setOutput(n, v),
+      error: (m) => core.error(m),
+      log: (l) => core.info(l)
+    })
+    return
+  }
   const payload = eventPayload(core.getInput('event-path'))
   const pr = payload.pull_request as PullRequestPayload | undefined
   if (!pr) throw new PolicyError(`needs a pull_request event, got "${github.context.eventName}"`)
