@@ -4,6 +4,8 @@ import { scrub, validate, type OpDeps, type OpInputs } from './shared.js'
 import * as g from './git.js'
 import * as l from './lists.js'
 import * as r from './read.js'
+import * as c from './ci.js'
+import * as p from './pr.js'
 import * as w from './write.js'
 
 export type Op = (api: Api, i: OpInputs, d: OpDeps) => Promise<{ verdict: string; ok: boolean }>
@@ -18,7 +20,12 @@ export const OPS: Record<string, Op> = {
   blob: g.blob,
   pulls: l.pulls,
   runs: l.runs,
-  runners: l.runners
+  runners: l.runners,
+  'pr-state': p.prState,
+  'dispatch-pin': p.dispatchPin,
+  'body-text': p.bodyText,
+  'lane-last-green': c.laneLastGreen,
+  'run-jobs': c.runJobs
 }
 
 export const OP_INPUTS = [
@@ -48,7 +55,12 @@ export const OP_INPUTS = [
   'max-entries',
   'max-pages',
   'cache',
-  'scope'
+  'scope',
+  'run',
+  'attempt',
+  'lanes',
+  'max-runs',
+  'delay-seconds'
 ] as const
 
 export interface OpEnv {

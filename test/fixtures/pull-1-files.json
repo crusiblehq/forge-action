@@ -1,0 +1,274 @@
+[
+  {
+    "filename": ".gitattributes",
+    "status": "added",
+    "sha": "01f49192b754c0f79bbc9913e428a8eb9b358411",
+    "additions": 2,
+    "deletions": 0,
+    "changes": 2
+  },
+  {
+    "filename": ".github/dependabot.yml",
+    "status": "added",
+    "sha": "21d705409eb06005f1583cff71603404c8b3ae59",
+    "additions": 19,
+    "deletions": 0,
+    "changes": 19
+  },
+  {
+    "filename": ".github/workflows/actionlint.yml",
+    "status": "added",
+    "sha": "d02c6a920e313db7e9687bf468816dcfb4df0d1f",
+    "additions": 25,
+    "deletions": 0,
+    "changes": 25
+  },
+  {
+    "filename": ".github/workflows/check-dist.yml",
+    "status": "added",
+    "sha": "858f1474d09f8db36d60f447cf6f62c38a52ad10",
+    "additions": 39,
+    "deletions": 0,
+    "changes": 39
+  },
+  {
+    "filename": ".github/workflows/codeql.yml",
+    "status": "added",
+    "sha": "dcf0a60067596651daf391949bd7ddd11e3ad378",
+    "additions": 33,
+    "deletions": 0,
+    "changes": 33
+  },
+  {
+    "filename": ".github/workflows/release.yml",
+    "status": "added",
+    "sha": "7cdf1198ae51a332d512bb4b54b41daddab28ef0",
+    "additions": 69,
+    "deletions": 0,
+    "changes": 69
+  },
+  {
+    "filename": ".github/workflows/test.yml",
+    "status": "added",
+    "sha": "a5b0ec170e330ba0d8348f35aa5f8290e86380ba",
+    "additions": 61,
+    "deletions": 0,
+    "changes": 61
+  },
+  {
+    "filename": ".gitignore",
+    "status": "added",
+    "sha": "cc47e569b77310f2befed1dfe1284b26ce4750cd",
+    "additions": 4,
+    "deletions": 0,
+    "changes": 4
+  },
+  {
+    "filename": ".node-version",
+    "status": "added",
+    "sha": "a45fd52cc5891570d6299fab38643103c3955474",
+    "additions": 1,
+    "deletions": 0,
+    "changes": 1
+  },
+  {
+    "filename": ".prettierignore",
+    "status": "added",
+    "sha": "e7275d549b84616856341947282a2b97a73beb97",
+    "additions": 4,
+    "deletions": 0,
+    "changes": 4
+  },
+  {
+    "filename": ".prettierrc.json",
+    "status": "added",
+    "sha": "529d1470d5b9ad58ca37bd9eda16f5284f9551a1",
+    "additions": 1,
+    "deletions": 0,
+    "changes": 1
+  },
+  {
+    "filename": "CONTRIBUTING.md",
+    "status": "added",
+    "sha": "255872e18d73b62af7a9522f60800b91dc679404",
+    "additions": 11,
+    "deletions": 0,
+    "changes": 11
+  },
+  {
+    "filename": "README.md",
+    "status": "added",
+    "sha": "33b8713c6e9378f2aa002780bf505fee34558e78",
+    "additions": 179,
+    "deletions": 0,
+    "changes": 179
+  },
+  {
+    "filename": "SECURITY.md",
+    "status": "added",
+    "sha": "f06157bdc8af332a5dbae2ec06781674619f5f2a",
+    "additions": 17,
+    "deletions": 0,
+    "changes": 17
+  },
+  {
+    "filename": "action.yml",
+    "status": "added",
+    "sha": "2582acefd69cdf02d009bd77ce34fe89cf6a051c",
+    "additions": 119,
+    "deletions": 0,
+    "changes": 119
+  },
+  {
+    "filename": "dist/index.js",
+    "status": "added",
+    "sha": "74ed16964c05b4267a43bb7827d8b1bff0b9e79b",
+    "additions": 34910,
+    "deletions": 0,
+    "changes": 34910
+  },
+  {
+    "filename": "dist/index.js.map",
+    "status": "added",
+    "sha": "176bd8c21c546f4459d1ebf703a5747973986795",
+    "additions": 1,
+    "deletions": 0,
+    "changes": 1
+  },
+  {
+    "filename": "docs/BEST-PRACTICES.md",
+    "status": "added",
+    "sha": "acd0c74905af389ec1120ce260c133d5579dd2b5",
+    "additions": 41,
+    "deletions": 0,
+    "changes": 41
+  },
+  {
+    "filename": "eslint.config.mjs",
+    "status": "added",
+    "sha": "74c02b558c8d11e8e04006b6306467bbce12d5a8",
+    "additions": 11,
+    "deletions": 0,
+    "changes": 11
+  },
+  {
+    "filename": "package-lock.json",
+    "status": "added",
+    "sha": "39b821f395bb79d20fba458e28feec84d7f630d8",
+    "additions": 3651,
+    "deletions": 0,
+    "changes": 3651
+  },
+  {
+    "filename": "package.json",
+    "status": "added",
+    "sha": "9515c35b99e62adaf01202f2a6b940c20000efaf",
+    "additions": 59,
+    "deletions": 0,
+    "changes": 59
+  },
+  {
+    "filename": "rollup.config.ts",
+    "status": "added",
+    "sha": "4d3d8837e438cc068cf8edf4186bd43ee57ccb6e",
+    "additions": 40,
+    "deletions": 0,
+    "changes": 40
+  },
+  {
+    "filename": "src/github.ts",
+    "status": "added",
+    "sha": "0cf1590d402f447d728e27b400ff1df6032a41a7",
+    "additions": 141,
+    "deletions": 0,
+    "changes": 141
+  },
+  {
+    "filename": "src/main.ts",
+    "status": "added",
+    "sha": "faa75ac07074670376e65dcc0bb48c21e28ca319",
+    "additions": 65,
+    "deletions": 0,
+    "changes": 65
+  },
+  {
+    "filename": "src/policy/bypass.ts",
+    "status": "added",
+    "sha": "d7ad3ed5049fb73a9175f938c82d3cdb4c9a71fe",
+    "additions": 27,
+    "deletions": 0,
+    "changes": 27
+  },
+  {
+    "filename": "src/policy/caps.ts",
+    "status": "added",
+    "sha": "50fbe1a5904d1e0e19857fe6a05d519bd9166f26",
+    "additions": 74,
+    "deletions": 0,
+    "changes": 74
+  },
+  {
+    "filename": "src/policy/decide.ts",
+    "status": "added",
+    "sha": "c4b095475bf032c46be10bc786223b725a4c068c",
+    "additions": 32,
+    "deletions": 0,
+    "changes": 32
+  },
+  {
+    "filename": "src/policy/index.ts",
+    "status": "added",
+    "sha": "24861a4ad82771555e74c37fb3bc5afbf14226dc",
+    "additions": 4,
+    "deletions": 0,
+    "changes": 4
+  },
+  {
+    "filename": "src/policy/modes.ts",
+    "status": "added",
+    "sha": "b8844b85a11a79ac7bc265fa7a957ae5a05cd3ed",
+    "additions": 55,
+    "deletions": 0,
+    "changes": 55
+  },
+  {
+    "filename": "src/run.ts",
+    "status": "added",
+    "sha": "6ac7fe31b06aa923a1b4be472dba480702dd08d5",
+    "additions": 271,
+    "deletions": 0,
+    "changes": 271
+  },
+  {
+    "filename": "test/policy.test.ts",
+    "status": "added",
+    "sha": "b4363b9e0e2b2c60ada1991816c48c4161369016",
+    "additions": 200,
+    "deletions": 0,
+    "changes": 200
+  },
+  {
+    "filename": "test/run.test.ts",
+    "status": "added",
+    "sha": "40d3ea631d5ca95d63ecb597448a3fd8c1245367",
+    "additions": 444,
+    "deletions": 0,
+    "changes": 444
+  },
+  {
+    "filename": "tsconfig.json",
+    "status": "added",
+    "sha": "e7724c9ccc25991cfd838d68581024ac7a129d54",
+    "additions": 18,
+    "deletions": 0,
+    "changes": 18
+  },
+  {
+    "filename": "vitest.config.ts",
+    "status": "added",
+    "sha": "80658b63604b69a5c5a7486b208ec9ef06b0add7",
+    "additions": 14,
+    "deletions": 0,
+    "changes": 14
+  }
+]

@@ -88,6 +88,26 @@ inputs:
     description: op tree only. Fail when the tree has more entries. Default 3000.
     required: false
     default: ''
+  run:
+    description: op run-jobs. Workflow run id.
+    required: false
+    default: ''
+  attempt:
+    description: op run-jobs. Run attempt; default the latest.
+    required: false
+    default: ''
+  lanes:
+    description: op lane-last-green. Comma or newline list of lane (job) names.
+    required: false
+    default: ''
+  max-runs:
+    description: op lane-last-green. Newest runs scanned, at most 100. Default 30.
+    required: false
+    default: ''
+  delay-seconds:
+    description: op pr-state. Pause between the head and mergeable re-reads, at most 60. Default 12.
+    required: false
+    default: ''
   max-pages:
     description: op pulls list, runs, runners. Fail when more than this many pages of 100.
     required: false

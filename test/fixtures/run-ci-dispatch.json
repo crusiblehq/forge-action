@@ -1,0 +1,10 @@
+{
+  "id": 777,
+  "path": ".github/workflows/ci.yml",
+  "head_sha": "8140fd8724c2203d95a0df770d2fce5ac53968ba",
+  "event": "workflow_dispatch",
+  "status": "completed",
+  "conclusion": "success",
+  "run_attempt": 1,
+  "display_title": "CI PR #1 @8140fd8724c2203d95a0df770d2fce5ac53968ba"
+}

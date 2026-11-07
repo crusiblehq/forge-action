@@ -1,0 +1,14 @@
+[
+  {
+    "state": "success",
+    "context": "ci-required",
+    "creator": { "login": "github-actions[bot]" },
+    "target_url": "https://github.com/o/r/actions/runs/777"
+  },
+  {
+    "state": "failure",
+    "context": "ci-required",
+    "creator": { "login": "github-actions[bot]" },
+    "target_url": "https://github.com/o/r/actions/runs/700"
+  }
+]
