@@ -65,16 +65,21 @@ it('requires a token', async () => {
   expect(r.verdict.why).toMatch(/token input is required/)
 })
 
-it.each([
-  ['repository', { repository: '../../orgs/x' }],
-  ['repository', { repository: 'o/r/../../x' }],
-  ['repository', { repository: 'o/..' }],
-  ['pr', { pr: '1/../../x', labels: 'a' }],
-  ['sha', { sha: 'main', context: 'c' }],
-  ['sha', { sha: `${S}/../x`, context: 'c' }]
-])('refuses a hostile %s before any call', async (_n, inputs) => {
-  const r = await exec('label', { labels: 'a', pr: '1', sha: S, context: 'c', ...inputs }, {})
+it.each<Record<string, string>>([
+  { repository: '../../orgs/x' },
+  { repository: 'o/r/../../x' },
+  { repository: 'o/..' },
+  { pr: '1/../../x' }
+])('refuses a hostile input %o before any call', async (inputs) => {
+  const r = await exec('label', { labels: 'a', pr: '1', ...inputs }, {})
   expect(r.code).toBe(1)
-  expect(r.verdict.why).toMatch(/^bad (repository|pr|sha)/)
+  expect(r.verdict.why).toMatch(/^bad (repository|pr)/)
+  expect(r.calls.length).toBe(0)
+})
+
+it.each(['main', `${S}/../x`])('status refuses a sha that is not 40 hex: %s', async (sha) => {
+  const r = await exec('status', { sha, context: 'c', state: 'success' }, {})
+  expect(r.code).toBe(1)
+  expect(r.verdict.why).toMatch(/^bad sha/)
   expect(r.calls.length).toBe(0)
 })
