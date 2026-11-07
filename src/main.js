@@ -3,9 +3,11 @@ import { client, Unreadable } from './api.js';
 import { getInput, mask, setOutput, scrub } from './io.js';
 import * as w from './ops-write.js';
 import * as r from './ops-read.js';
+import * as g from './ops-git.js';
+import * as l from './ops-list.js';
 
-export const OPS = { status: w.status, label: w.label, dispatch: w.dispatch, files: r.files, ref: r.ref };
-const NAMES = ['op', 'token', 'repository', 'pr', 'sha', 'ref', 'paths', 'dest', 'state', 'context', 'description', 'target-url', 'labels', 'remove-labels', 'workflow', 'inputs', 'gates', 'wait-seconds', 'retry-unknown-inputs'];
+export const OPS = { status: w.status, label: w.label, dispatch: w.dispatch, files: r.files, ref: r.ref, commit: g.commit, tree: g.tree, blob: g.blob, pulls: l.pulls, runs: l.runs, runners: l.runners };
+const NAMES = ['op', 'token', 'repository', 'pr', 'sha', 'ref', 'paths', 'dest', 'state', 'context', 'description', 'target-url', 'labels', 'remove-labels', 'workflow', 'inputs', 'gates', 'wait-seconds', 'retry-unknown-inputs', 'event', 'status', 'base', 'recursive', 'max-entries', 'max-pages', 'cache', 'scope'];
 
 export async function run(env = process.env, deps = {}) {
   const i = Object.fromEntries(NAMES.map((n) => [n, getInput(n, env)]));

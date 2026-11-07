@@ -18,6 +18,14 @@ Pin by 40-character sha: `uses: crusiblehq/forge-action@<sha> # v1.x.y`.
 | `dispatch` | `workflow`, `ref`, `pr`, `inputs` (JSON), `gates` (at most 4096 bytes, refused before the call), `retry-unknown-inputs` | `dropped`: inputs removed by the one retry |
 | `files` | `paths`, `sha` or `ref`, `dest` | `files[]`: `path`, `found`, `size`, `sha` |
 | `ref` | `ref` (`main`, `heads/x` or `tags/x`) | `sha`, `type`; `absent` on 404 |
+| `commit` | `sha` (40 hex) | `tree`, `parents[]`, `message`, `files[]` (`path`, `status`, `sha`, `from`), `truncated` (300 files) |
+| `tree` | `sha`, `paths` (prefix filter), `recursive`, `max-entries` (3000) | `entries[]` (`path`, `type`, `mode`, `sha`, `size`). `truncated` or too many entries is `unreadable`. `recursive` is refused when `sha` is a commit; a root tree sha cannot be told apart, so the entry cap is the backstop |
+| `blob` | `paths` (lines `path=blobsha`), `dest`, `cache` | `written`, `fetched`. Each sha is fetched once per step and, with `cache`, once across steps; at most 8 in flight; 1 MiB cap |
+| `pulls` | `pr` for one; else `state` (open), `base`, `max-pages` (5) | `pull` or `pulls[]`: `number`, `state`, `merged`, `draft`, `head_sha`, `head_ref`, `head_repo`, `base_ref`, `mergeable`, `mergeable_state`, `labels`. One PR read is a single `mergeable` read, not the 5-read agreement (a later op) |
+| `runs` | `workflow` (else all), `sha`, `ref` (branch), `event`, `status`, `max-pages` (3) | `runs[]`: `id`, `attempt`, `status`, `conclusion`, `head_sha`, `head_branch`, `event`, `actor`, `created_at` |
+| `runners` | `scope` (`org` default, `repo`), `labels` | `total`, `online`, `busy`, `idle`, `by_label{}`. Org scope needs `administration: read`; a 403 is `unreadable` |
+
+A list with more pages than `max-pages` is `unreadable`, never a silent cut.
 
 `dispatch` on a 422 that names unexpected inputs (an old branch whose workflow lacks `gates`) redispatches once without them and logs a warning. Any other 422 fails with GitHub's message.
 
@@ -25,4 +33,4 @@ Pin by 40-character sha: `uses: crusiblehq/forge-action@<sha> # v1.x.y`.
 
 ## Development
 
-`npm ci`, `npm test` (node:test, fixtures in `test/fixtures` are recorded from the public API), `npm run build` (esbuild to `dist/index.js`, committed; CI fails on a stale `dist/`).
+`npm ci`, `npm test` (node:test, fixtures in `test/fixtures` are recorded from this public repository; `runners-synthetic.json` is hand-written to the documented shape, since the runners API needs an admin token), `npm run build` (esbuild to `dist/index.js`, committed; CI fails on a stale `dist/`).

@@ -3,7 +3,7 @@ description: GitHub operations for Crusible dispatch. One op per step, on a toke
 author: Crusible
 inputs:
   op:
-    description: status, label, dispatch, files or ref (see README for each op).
+    description: status, label, dispatch, files, ref, commit, tree, blob, pulls, runs or runners (see README for each op).
     required: true
   token:
     description: A GitHub token the caller supplies (job token or an App installation token). The action never mints one and never prints it.
@@ -12,22 +12,22 @@ inputs:
     description: owner/name. Default is the running repository.
     required: false
   pr:
-    description: Pull request number (label, dispatch).
+    description: Pull request number (label, dispatch, pulls).
     required: false
   sha:
-    description: Commit sha (status, files).
+    description: Commit, tree or blob sha (status, files, commit, tree, runs head_sha).
     required: false
   ref:
     description: Branch or tag name (dispatch, ref) or git ref for files.
     required: false
   paths:
-    description: Comma or newline list of repository paths (files).
+    description: Comma or newline list. files: repository paths. tree: path prefixes to keep. blob: lines of path=blobsha.
     required: false
   dest:
     description: Directory the files op writes under.
     required: false
   state:
-    description: pending, success, failure or error. Empty on the status op means read.
+    description: status: pending, success, failure or error (empty = read). pulls list: open, closed or all.
     required: false
   context:
     description: Commit status context (status).
@@ -39,7 +39,7 @@ inputs:
     description: Commit status target URL (status).
     required: false
   labels:
-    description: Labels to add (label).
+    description: label: labels to add. runners: labels to count.
     required: false
   remove-labels:
     description: Labels to remove (label).
@@ -55,6 +55,30 @@ inputs:
     required: false
   wait-seconds:
     description: status read only. Poll up to this many seconds, in three equal steps.
+    required: false
+  event:
+    description: Event filter (runs).
+    required: false
+  status:
+    description: Run status filter (runs).
+    required: false
+  base:
+    description: Base branch filter (pulls list).
+    required: false
+  recursive:
+    description: tree only. true reads a subtree recursively; refused on a commit sha.
+    required: false
+  max-entries:
+    description: tree only. Fail when the tree has more entries. Default 3000.
+    required: false
+  max-pages:
+    description: pulls list, runs, runners. Fail when more than this many pages of 100.
+    required: false
+  cache:
+    description: blob only. Directory keyed by blob sha, shared across steps, so a sha is fetched once per pass.
+    required: false
+  scope:
+    description: runners only. org (default, needs administration read) or repo.
     required: false
   retry-unknown-inputs:
     description: dispatch only. On a 422 naming unexpected inputs, redispatch once without them. Set false to disable.

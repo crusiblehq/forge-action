@@ -200,9 +200,113 @@ async function ref(api, i) {
   return { verdict: "ok", sha: d.object.sha, type: d.object.type, ok: true };
 }
 
+// src/ops-git.js
+import { existsSync, mkdirSync as mkdirSync2, readFileSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { join } from "node:path";
+var SHA = /^[0-9a-f]{40}$/;
+var need = (cond, msg) => {
+  if (!cond) throw new Unreadable(msg);
+};
+async function commit(api, i) {
+  need(SHA.test(i.sha), "commit needs a 40-hex sha");
+  const d = await api.read(`/repos/${i.repository}/commits/${i.sha}`);
+  if (!d) return { verdict: "absent", ok: false };
+  const files2 = (d.files ?? []).map((f) => ({ path: f.filename, status: f.status, sha: f.sha, from: f.previous_filename }));
+  return { verdict: "ok", sha: d.sha, tree: d.commit.tree.sha, parents: d.parents.map((p) => p.sha), message: d.commit.message, files: files2, truncated: files2.length >= 300, ok: true };
+}
+async function tree(api, i) {
+  need(SHA.test(i.sha), "tree needs a 40-hex sha");
+  const recursive = i.recursive === "true";
+  const max = Number(i["max-entries"] || 3e3);
+  if (recursive) {
+    const isCommit = await api.read(`/repos/${i.repository}/git/commits/${i.sha}`);
+    need(!isCommit, "recursive tree refused on a commit (root) sha; walk to the subtree first");
+  }
+  const d = await api.read(`/repos/${i.repository}/git/trees/${i.sha}`, { query: recursive ? { recursive: 1 } : {} });
+  if (!d) return { verdict: "absent", ok: false };
+  need(!d.truncated, "tree truncated by the API");
+  need(d.tree.length <= max, `tree has ${d.tree.length} entries, above ${max}`);
+  const prefixes = list(i.paths ?? "");
+  const keep = (e) => !prefixes.length || prefixes.some((p) => e.path === p || e.path.startsWith(`${p}/`));
+  const entries = d.tree.filter(keep).map((e) => ({ path: e.path, type: e.type, mode: e.mode, sha: e.sha, size: e.size }));
+  return { verdict: "ok", sha: d.sha, entries, ok: true };
+}
+async function blob(api, i) {
+  need(i.dest, "blob needs dest");
+  const pairs = list(i.paths ?? "").map((l) => {
+    const [path, sha] = l.split("=");
+    need(path && SHA.test(sha ?? ""), `blob pair must be path=sha: ${l}`);
+    return [checkRelPath(path), sha];
+  });
+  need(pairs.length, "blob needs paths");
+  const bytes = /* @__PURE__ */ new Map();
+  const fetchOne = async (sha) => {
+    const cached = i.cache && join(i.cache, sha);
+    if (cached && existsSync(cached)) return readFileSync(cached);
+    const d = await api.read(`/repos/${i.repository}/git/blobs/${sha}`);
+    need(d, `blob ${sha} absent`);
+    need(d.size <= FILE_CAP, `blob ${sha}: ${d.size} bytes above the ${FILE_CAP} cap`);
+    const b = Buffer.from(d.content, d.encoding === "base64" ? "base64" : "utf8");
+    if (cached) {
+      mkdirSync2(i.cache, { recursive: true });
+      writeFileSync2(cached, b);
+    }
+    return b;
+  };
+  const shas = [...new Set(pairs.map((p) => p[1]))];
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(8, shas.length) }, async () => {
+    while (next < shas.length) {
+      const s = shas[next++];
+      bytes.set(s, await fetchOne(s));
+    }
+  }));
+  for (const [path, sha] of pairs) writeUnder(i.dest, path, bytes.get(sha));
+  return { verdict: "ok", written: pairs.length, fetched: shas.length, ok: true };
+}
+
+// src/ops-list.js
+async function pages(api, path, query, key, max) {
+  const out = [];
+  for (let page = 1; page <= max; page++) {
+    const d = await api.read(path, { query: { ...query, per_page: 100, page } });
+    if (!d) throw new Unreadable(`GET ${path}: not found`);
+    const rows = key ? d[key] : d;
+    out.push(...rows);
+    if (rows.length < 100) return out;
+  }
+  throw new Unreadable(`GET ${path}: more than ${max} pages`);
+}
+var pr = (p) => ({ number: p.number, state: p.state, merged: !!p.merged, draft: p.draft, head_sha: p.head.sha, head_ref: p.head.ref, head_repo: p.head.repo?.full_name ?? null, base_ref: p.base.ref, mergeable: p.mergeable ?? null, mergeable_state: p.mergeable_state ?? null, labels: p.labels.map((l) => l.name) });
+async function pulls(api, i) {
+  if (i.pr) {
+    const d = await api.read(`/repos/${i.repository}/pulls/${i.pr}`);
+    return d ? { verdict: "ok", pull: pr(d), ok: true } : { verdict: "absent", ok: false };
+  }
+  const query = { state: i.state || "open", ...i.base ? { base: i.base } : {} };
+  const rows = await pages(api, `/repos/${i.repository}/pulls`, query, null, Number(i["max-pages"] || 5));
+  return { verdict: "ok", pulls: rows.map(pr), ok: true };
+}
+async function runs(api, i) {
+  const q = { ...i.sha ? { head_sha: i.sha } : {}, ...i.ref ? { branch: i.ref } : {}, ...i.event ? { event: i.event } : {}, ...i.status ? { status: i.status } : {} };
+  const path = i.workflow ? `/repos/${i.repository}/actions/workflows/${encodeURIComponent(i.workflow)}/runs` : `/repos/${i.repository}/actions/runs`;
+  const rows = await pages(api, path, q, "workflow_runs", Number(i["max-pages"] || 3));
+  const out = rows.map((r) => ({ id: r.id, attempt: r.run_attempt, status: r.status, conclusion: r.conclusion, head_sha: r.head_sha, head_branch: r.head_branch, event: r.event, actor: r.actor?.login ?? null, created_at: r.created_at }));
+  return { verdict: "ok", runs: out, ok: true };
+}
+async function runners(api, i) {
+  const org = i.repository.split("/")[0];
+  const path = i.scope === "repo" ? `/repos/${i.repository}/actions/runners` : `/orgs/${org}/actions/runners`;
+  const rows = await pages(api, path, {}, "runners", Number(i["max-pages"] || 5));
+  const tally = (rs) => ({ total: rs.length, online: rs.filter((r) => r.status === "online").length, busy: rs.filter((r) => r.status === "online" && r.busy).length, idle: rs.filter((r) => r.status === "online" && !r.busy).length });
+  const by_label = {};
+  for (const l of list(i.labels ?? "")) by_label[l] = tally(rows.filter((r) => r.labels.some((x) => x.name === l)));
+  return { verdict: "ok", ...tally(rows), by_label, ok: true };
+}
+
 // src/main.js
-var OPS = { status, label, dispatch, files, ref };
-var NAMES = ["op", "token", "repository", "pr", "sha", "ref", "paths", "dest", "state", "context", "description", "target-url", "labels", "remove-labels", "workflow", "inputs", "gates", "wait-seconds", "retry-unknown-inputs"];
+var OPS = { status, label, dispatch, files, ref, commit, tree, blob, pulls, runs, runners };
+var NAMES = ["op", "token", "repository", "pr", "sha", "ref", "paths", "dest", "state", "context", "description", "target-url", "labels", "remove-labels", "workflow", "inputs", "gates", "wait-seconds", "retry-unknown-inputs", "event", "status", "base", "recursive", "max-entries", "max-pages", "cache", "scope"];
 async function run(env = process.env, deps = {}) {
   const i = Object.fromEntries(NAMES.map((n) => [n, getInput(n, env)]));
   const out = deps.out ?? ((s) => process.stdout.write(s));
