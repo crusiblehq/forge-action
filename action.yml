@@ -1,0 +1,70 @@
+name: Forge action
+description: GitHub operations for Crusible dispatch. One op per step, on a token the caller supplies.
+author: Crusible
+inputs:
+  op:
+    description: status, label, dispatch, files or ref (see README for each op).
+    required: true
+  token:
+    description: A GitHub token the caller supplies (job token or an App installation token). The action never mints one and never prints it.
+    required: true
+  repository:
+    description: owner/name. Default is the running repository.
+    required: false
+  pr:
+    description: Pull request number (label, dispatch).
+    required: false
+  sha:
+    description: Commit sha (status, files).
+    required: false
+  ref:
+    description: Branch or tag name (dispatch, ref) or git ref for files.
+    required: false
+  paths:
+    description: Comma or newline list of repository paths (files).
+    required: false
+  dest:
+    description: Directory the files op writes under.
+    required: false
+  state:
+    description: pending, success, failure or error. Empty on the status op means read.
+    required: false
+  context:
+    description: Commit status context (status).
+    required: false
+  description:
+    description: Commit status description, cut at 140 characters (status).
+    required: false
+  target-url:
+    description: Commit status target URL (status).
+    required: false
+  labels:
+    description: Labels to add (label).
+    required: false
+  remove-labels:
+    description: Labels to remove (label).
+    required: false
+  workflow:
+    description: Workflow file name or id (dispatch).
+    required: false
+  inputs:
+    description: JSON object of workflow_dispatch inputs (dispatch).
+    required: false
+  gates:
+    description: One string input sent as inputs.gates, at most 4096 bytes (dispatch).
+    required: false
+  wait-seconds:
+    description: status read only. Poll up to this many seconds, in three equal steps.
+    required: false
+  retry-unknown-inputs:
+    description: dispatch only. On a 422 naming unexpected inputs, redispatch once without them. Set false to disable.
+    required: false
+    default: 'true'
+outputs:
+  verdict:
+    description: JSON verdict. Always has "verdict" (ok, absent or unreadable).
+  ok:
+    description: true when the op succeeded and found what it asked for.
+runs:
+  using: node20
+  main: dist/index.js

@@ -1,0 +1,14 @@
+{
+  "name": "forge-action",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --platform=node --target=node20 --format=esm --outfile=dist/index.js",
+    "test": "node --test \"test/*.test.js\"",
+    "check-dist": "npm run build && git diff --exit-code -- dist"
+  },
+  "devDependencies": { "esbuild": "0.25.5" }
+}
