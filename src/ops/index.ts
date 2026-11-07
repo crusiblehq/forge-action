@@ -1,10 +1,25 @@
 // Op mode: one GitHub operation per step on a caller-supplied token. Never mints or prints the token.
 import { client, Unreadable, type Api, type ClientOpts } from './api.js'
 import { scrub, validate, type OpDeps, type OpInputs } from './shared.js'
+import * as g from './git.js'
+import * as l from './lists.js'
+import * as r from './read.js'
 import * as w from './write.js'
 
 export type Op = (api: Api, i: OpInputs, d: OpDeps) => Promise<{ verdict: string; ok: boolean }>
-export const OPS: Record<string, Op> = { status: w.status, label: w.label, dispatch: w.dispatch }
+export const OPS: Record<string, Op> = {
+  status: w.status,
+  label: w.label,
+  dispatch: w.dispatch,
+  files: r.files,
+  ref: r.ref,
+  commit: g.commit,
+  tree: g.tree,
+  blob: g.blob,
+  pulls: l.pulls,
+  runs: l.runs,
+  runners: l.runners
+}
 
 export const OP_INPUTS = [
   'op',

@@ -1,0 +1,10 @@
+{
+  "ref": "refs/heads/main",
+  "node_id": "REF_kwDOVjWX8K9yZWZzL2hlYWRzL21haW4",
+  "url": "https://api.github.com/repos/crusiblehq/forge-action/git/refs/heads/main",
+  "object": {
+    "sha": "732b68254b3cb32a689fb9f189872fef2bca6434",
+    "type": "commit",
+    "url": "https://api.github.com/repos/crusiblehq/forge-action/git/commits/732b68254b3cb32a689fb9f189872fef2bca6434"
+  }
+}

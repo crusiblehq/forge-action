@@ -102,8 +102,10 @@ A JSON array, from a repository variable. Each entry gives a label (an exact nam
 ## Operations (`op`)
 
 Set `op` to run one GitHub operation instead of the gate. The token is the single `token` input; the action never mints or prints it.
-Ops: `status` (write or read a commit status), `label` (add and remove PR labels), `dispatch` (workflow dispatch with `pr` and `gates`;
-a 422 naming unexpected inputs redispatches once without them). Each sets the outputs `verdict` (JSON) and `ok`.
+Write ops: `status` (write or read a commit status), `label` (add and remove PR labels), `dispatch` (workflow dispatch with `pr` and `gates`;
+a 422 naming unexpected inputs redispatches once without them).
+Read ops: `files`, `ref`, `commit`, `tree`, `blob` (deduped by sha, 8 in flight), `pulls`, `runs`, `runners`. A read that is incomplete fails;
+paths cannot leave `dest` or touch `.git`; one file is at most 1 MiB. Each sets the outputs `verdict` (JSON) and `ok`.
 5xx, 429 and secondary rate limits retry with `Retry-After`; a 4xx is never retried; a run stops after 250 API calls.
 
 ## Known limits in v1
