@@ -33,7 +33,8 @@ export async function exec(
   op: string,
   inputs: Record<string, string>,
   routes: Record<string, R | R[]>,
-  extra: Record<string, unknown> = {}
+  extra: Record<string, unknown> = {},
+  repository = 'o/r'
 ) {
   const { f, calls } = fakeFetch(routes)
   const dir = mkdtempSync(join(tmpdir(), 'fa-'))
@@ -42,7 +43,7 @@ export async function exec(
   const out: Record<string, string> = {}
   const code = await execOp({
     get: (n) => all[n] ?? '',
-    repository: 'o/r',
+    repository,
     mask: (v) => void (log += `::add-mask::${v}\n`),
     output: (n, v) => void (out[n] = String(v)),
     error: (m) => void (log += `::error::${m}\n`),

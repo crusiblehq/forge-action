@@ -69,20 +69,26 @@ export async function laneLastGreen(api: Api, i: OpInputs) {
   })
   need(d, `workflow ${i.workflow || 'ci.yml'} not found`)
   const runs: any[] = d.workflow_runs.slice(0, max)
-  const found: Record<string, string> = {}
+  const found = new Map<string, string>()
   let scanned = 0
   for (const run of runs) {
-    if (lanes.every((l) => l in found)) break
+    if (lanes.every((l) => found.has(l))) break
     scanned++
     const jobs = await jobsOf(api, i.repository, run.id, run.run_attempt)
     need(jobs, `jobs of run ${run.id} not found`)
     const green = new Map<string, boolean>()
     for (const j of jobs) {
       const lane = laneOf(j.name)
-      if (lanes.includes(lane) && !(lane in found))
+      if (lanes.includes(lane) && !found.has(lane))
         green.set(lane, (green.get(lane) ?? true) && j.conclusion === 'success')
     }
-    for (const [lane, ok] of green) if (ok) found[lane] = run.head_sha.slice(0, 12)
+    for (const [lane, ok] of green) if (ok) found.set(lane, run.head_sha.slice(0, 12))
   }
-  return { verdict: 'ok', lanes: found, missing: lanes.filter((l) => !(l in found)), scanned, ok: true }
+  return {
+    verdict: 'ok',
+    lanes: Object.fromEntries(found),
+    missing: lanes.filter((l) => !found.has(l)),
+    scanned,
+    ok: true
+  }
 }
