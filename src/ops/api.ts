@@ -17,7 +17,11 @@ export interface ClientOpts {
   budget?: number
   wait?: (ms: number) => Promise<void>
   retries?: number
+  maxWaitMs?: number
 }
+
+/** Longest single Retry-After honoured; a larger value fails the step rather than stalling it to the job timeout. */
+export const MAX_WAIT_MS = 60_000
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
@@ -27,7 +31,8 @@ export function client({
   base = 'https://api.github.com',
   budget = 250,
   wait = sleep,
-  retries = 3
+  retries = 3,
+  maxWaitMs = MAX_WAIT_MS
 }: ClientOpts): Api {
   let calls = 0
   async function request(
@@ -63,6 +68,8 @@ export function client({
       if (res.status >= 500 || secondary) {
         if (attempt >= retries) throw new Unreadable(`${method} ${path}: HTTP ${res.status} after ${attempt + 1} tries`)
         const ra = Number(res.headers.get('retry-after'))
+        if (ra * 1000 > maxWaitMs)
+          throw new Unreadable(`${method} ${path}: Retry-After ${ra}s above the ${maxWaitMs / 1000}s cap`)
         await wait(ra > 0 ? ra * 1000 : 500 * 2 ** attempt)
         continue
       }

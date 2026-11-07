@@ -144,9 +144,8 @@ inputs:
     required: false
     default: ''
   token:
-    description: The job token. Leave the default; a personal access token is unsupported.
-    required: false
-    default: ${{ github.token }}
+    description: The job token, passed explicitly as `${{ github.token }}`. There is no default, so a step never runs on a token it did not name. A personal access token is unsupported.
+    required: true
 
 outputs:
   verdict:

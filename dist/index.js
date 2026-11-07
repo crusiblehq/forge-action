@@ -34609,8 +34609,10 @@ function decide(i) {
 // REST client for the op mode: bounded retries (5xx, 429, secondary rate limit with Retry-After), a call budget, fail closed.
 class Unreadable extends Error {
 }
+/** Longest single Retry-After honoured; a larger value fails the step rather than stalling it to the job timeout. */
+const MAX_WAIT_MS = 60_000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function client({ token, fetchImpl = globalThis.fetch, base = 'https://api.github.com', budget = 250, wait = sleep, retries = 3 }) {
+function client({ token, fetchImpl = globalThis.fetch, base = 'https://api.github.com', budget = 250, wait = sleep, retries = 3, maxWaitMs = MAX_WAIT_MS }) {
     let calls = 0;
     async function request(method, path, { body, query } = {}) {
         const url = new URL(base + path);
@@ -34645,6 +34647,8 @@ function client({ token, fetchImpl = globalThis.fetch, base = 'https://api.githu
                 if (attempt >= retries)
                     throw new Unreadable(`${method} ${path}: HTTP ${res.status} after ${attempt + 1} tries`);
                 const ra = Number(res.headers.get('retry-after'));
+                if (ra * 1000 > maxWaitMs)
+                    throw new Unreadable(`${method} ${path}: Retry-After ${ra}s above the ${maxWaitMs / 1000}s cap`);
                 await wait(ra > 0 ? ra * 1000 : 500 * 2 ** attempt);
                 continue;
             }
@@ -34679,6 +34683,18 @@ const list = (raw) => raw
     .filter(Boolean);
 /** Strip the token from any text before it reaches a log. */
 const scrub = (text, token) => (token ? text.split(token).join('***') : text);
+const REPO = /^[\w.-]+\/[\w.-]+$/;
+const NUM = /^\d+$/;
+const SHA = /^[0-9a-f]{40}$/;
+/** Reject values that would be spliced into an API path: they could retarget the token. */
+function validate(i) {
+    if (!REPO.test(i.repository) || i.repository.split('/').some((p) => p === '.' || p === '..'))
+        throw new Error(`bad repository: ${JSON.stringify(i.repository)}`);
+    if (i.pr && !NUM.test(i.pr))
+        throw new Error(`bad pr: ${JSON.stringify(i.pr)}`);
+    if (i.sha && !SHA.test(i.sha))
+        throw new Error(`bad sha: ${JSON.stringify(i.sha)}`);
+}
 
 // Write ops: status, label, dispatch.
 const GATES_MAX = 4096;
@@ -34806,6 +34822,7 @@ async function execOp(env) {
         if (!i.token)
             throw new Unreadable('token input is required');
         i.repository ||= env.repository;
+        validate(i);
         const op = OPS[i.op];
         if (!op)
             throw new Unreadable(`unknown op: ${i.op}`);

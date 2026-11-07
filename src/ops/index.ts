@@ -1,6 +1,6 @@
 // Op mode: one GitHub operation per step on a caller-supplied token. Never mints or prints the token.
 import { client, Unreadable, type Api, type ClientOpts } from './api.js'
-import { scrub, type OpDeps, type OpInputs } from './shared.js'
+import { scrub, validate, type OpDeps, type OpInputs } from './shared.js'
 import * as w from './write.js'
 
 export type Op = (api: Api, i: OpInputs, d: OpDeps) => Promise<{ verdict: string; ok: boolean }>
@@ -54,6 +54,7 @@ export async function execOp(env: OpEnv): Promise<number> {
   try {
     if (!i.token) throw new Unreadable('token input is required')
     i.repository ||= env.repository
+    validate(i)
     const op = OPS[i.op!]
     if (!op) throw new Unreadable(`unknown op: ${i.op}`)
     const api = client({ token: i.token, ...env.client })
