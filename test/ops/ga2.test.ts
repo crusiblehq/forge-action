@@ -86,6 +86,28 @@ it('pr-state: each reuse condition refuses', async () => {
   expect((await run({}, withState({ target_url: 'https://evil.example/actions/runs/777' }))).verdict.verdict).toBe('ok')
 })
 
+it('pr-state: the repository in the status url is literal, not a pattern', async () => {
+  const st = fixture('status-ci-required.json')
+  const fork = (url: string) => ({
+    'GET /repos/o.r/x/pulls/1': ok(pull()),
+    [`GET /repos/o.r/x/commits/${H}/statuses?per_page=100&page=1`]: ok([{ ...st[0], target_url: url }]),
+    'GET /repos/o.r/x/actions/runs/777': ok(fixture('run-ci-dispatch.json')),
+    'GET /repos/o.r/x/pulls/1/files?per_page=100&page=1': ok(fixture('pull-1-files.json'))
+  })
+  const go = (url: string) =>
+    exec('pr-state', { pr: '1', sha: H, base: 'main', 'delay-seconds': '0' }, fork(url), {}, 'o.r/x')
+  expect((await go('https://github.com/o.r/x/actions/runs/777')).verdict.verdict).toBe('reused')
+  expect((await go('https://github.com/oxr/x/actions/runs/777')).verdict.verdict).toBe('ok')
+})
+
+it('pr-state: a rename lists its previous filename as from', async () => {
+  const files = fixture('pull-1-files.json').map((f: object, n: number) =>
+    n === 0 ? { ...f, status: 'renamed', previous_filename: 'old/name.ts' } : f
+  )
+  const r = await run({}, { [`GET ${FILES}`]: ok(files) })
+  expect(r.verdict.files[0]).toMatchObject({ status: 'renamed', from: 'old/name.ts' })
+})
+
 it('pr-state: a status list that never shows ci-required in 3 full pages is unreadable', async () => {
   const full = Array.from({ length: 100 }, () => ({ context: 'x', state: 'success' }))
   const routes: Record<string, { status: number; body: unknown }> = {}
@@ -141,6 +163,15 @@ it('dispatch-pin: a moved tip, a moved pull request head, an absent ref and a cl
       .code
   ).toBe(1)
 })
+
+it.each(['heads/a/../../../orgs/x', '../x', '/x', 'refs/heads/x', 'a//b'])(
+  'dispatch-pin rejects ref %s',
+  async (bad) => {
+    const r = await pin({ ref: bad })
+    expect(r.code).toBe(1)
+    expect(r.log).toMatch(/ref rejected/)
+  }
+)
 
 it('body-text: title and body go to files under dest, never to the verdict, the outputs or the log', async () => {
   const body = 'secret-ish body\n'.repeat(4000)
@@ -222,6 +253,20 @@ it('lane-last-green: newest green run per lane as a 12-hex sha; a matrix lane is
     scanned: 3,
     ok: true
   })
+})
+
+it('lane-last-green: lanes named like Object.prototype keys are found and missing correctly', async () => {
+  const runs = [{ id: 1, run_attempt: 1, head_sha: '1'.repeat(40) }]
+  const r = await exec(
+    'lane-last-green',
+    { lanes: 'constructor,toString,go' },
+    {
+      [`GET ${WF(30)}`]: ok({ workflow_runs: runs }),
+      ...jobsOf(1, [job('constructor', 'success'), job('go', 'success')])
+    }
+  )
+  expect(r.verdict.lanes).toEqual({ constructor: '111111111111', go: '111111111111' })
+  expect(r.verdict.missing).toEqual(['toString'])
 })
 
 it('lane-last-green: stops scanning once every lane is found; bad lanes, max-runs and a failed jobs read are refused', async () => {

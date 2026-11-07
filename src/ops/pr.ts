@@ -2,7 +2,7 @@
 import { Unreadable, type Api } from './api.js'
 import { pages } from './lists.js'
 import { SHA, type OpDeps, type OpInputs } from './shared.js'
-import { writeUnder } from './safe.js'
+import { checkRef, writeUnder } from './safe.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const READS = 5
@@ -51,7 +51,9 @@ async function ciRequired(api: Api, repo: string, sha: string) {
 async function reusedRun(api: Api, i: OpInputs): Promise<number | null> {
   const s = await ciRequired(api, i.repository, i.sha!)
   if (s?.state !== 'success' || s.creator?.login !== 'github-actions[bot]') return null
-  const m = new RegExp(`^https://github\\.com/${i.repository}/actions/runs/(\\d+)$`).exec(s.target_url ?? '')
+  const m = new RegExp(
+    `^https://github\\.com/${i.repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/actions/runs/(\\d+)$`
+  ).exec(s.target_url ?? '')
   if (!m) return null
   const run = await api.read(`/repos/${i.repository}/actions/runs/${m[1]}`)
   need(run, `run ${m[1]} not found`)
@@ -98,7 +100,14 @@ export async function prState(api: Api, i: OpInputs, d: OpDeps) {
   }
   const files = await pages(api, `/repos/${i.repository}/pulls/${i.pr}/files`, {}, null, 30)
   need(files.length === pull.changed_files, `changed files read ${files.length} of ${pull.changed_files}`)
-  return out('ok', { reads, files: files.map((f) => ({ path: f.filename, status: f.status })) })
+  return out('ok', {
+    reads,
+    files: files.map((f) => ({
+      path: f.filename,
+      status: f.status,
+      ...(f.previous_filename ? { from: f.previous_filename } : {})
+    }))
+  })
 }
 
 // The dispatch target's tip must be the sha the pass listed, which must be the pull request's head.
@@ -107,7 +116,7 @@ export async function dispatchPin(api: Api, i: OpInputs) {
   const pull = await readPull(api, i)
   need(pull.state === 'open', `pull request #${i.pr} is ${pull.state}`)
   need(pull.head.sha === i.sha, `pull request #${i.pr} head is ${pull.head.sha}, the pass listed ${i.sha}`)
-  const ref = i.ref || pull.head.ref
+  const ref = checkRef(i.ref || pull.head.ref)
   const name = /^heads\//.test(ref) ? ref : `heads/${ref}`
   const tip = await api.read(`/repos/${i.repository}/git/ref/${name.split('/').map(encodeURIComponent).join('/')}`)
   need(tip, `dispatch target ${name} does not exist in ${i.repository}`)
