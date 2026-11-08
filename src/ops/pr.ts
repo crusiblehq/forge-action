@@ -2,7 +2,7 @@
 import { Unreadable, type Api } from './api.js'
 import { pages } from './lists.js'
 import { SHA, type OpDeps, type OpInputs } from './shared.js'
-import { checkRef, writeUnder } from './safe.js'
+import { checkRef, outName, writeUnder } from './safe.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const READS = 5
@@ -25,8 +25,8 @@ async function readPull(api: Api, i: OpInputs) {
 }
 const facts = (d: any) => ({
   head_sha: d.head.sha,
-  head_ref: d.head.ref,
-  base_ref: d.base.ref,
+  head_ref: outName(d.head.ref),
+  base_ref: outName(d.base.ref),
   base_sha: d.base.sha,
   head_repo: d.head.repo?.full_name ?? null,
   author_id: d.user?.id ?? null
@@ -134,5 +134,5 @@ export async function bodyText(api: Api, i: OpInputs) {
   const body: string = pull.body ?? ''
   writeUnder(i.dest!, 'title.txt', Buffer.from(title))
   writeUnder(i.dest!, 'body.md', Buffer.from(body))
-  return { verdict: 'ok', title, title_chars: title.length, body_chars: body.length, ok: true }
+  return { verdict: 'ok', title_chars: title.length, body_chars: body.length, ok: true }
 }

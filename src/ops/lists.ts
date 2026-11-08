@@ -1,5 +1,6 @@
 // List reads: pulls, runs, runners. Reduced to the fields the dispatch pass uses.
 import { Unreadable, type Api } from './api.js'
+import { outName } from './safe.js'
 import { list, type OpInputs } from './shared.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -27,9 +28,9 @@ const pr = (p: any) => ({
   merged: !!p.merged,
   draft: p.draft,
   head_sha: p.head.sha,
-  head_ref: p.head.ref,
+  head_ref: outName(p.head.ref),
   head_repo: p.head.repo?.full_name ?? null,
-  base_ref: p.base.ref,
+  base_ref: outName(p.base.ref),
   mergeable: p.mergeable ?? null,
   mergeable_state: p.mergeable_state ?? null,
   labels: p.labels.map((l: { name: string }) => l.name)
@@ -63,7 +64,7 @@ export async function runs(api: Api, i: OpInputs) {
     status: r.status,
     conclusion: r.conclusion,
     head_sha: r.head_sha,
-    head_branch: r.head_branch,
+    head_branch: outName(r.head_branch),
     event: r.event,
     actor: r.actor?.login ?? null,
     created_at: r.created_at
