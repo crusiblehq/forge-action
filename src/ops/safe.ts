@@ -42,3 +42,7 @@ export function writeUnder(dest: string, rel: string, bytes: Uint8Array): string
   writeFileSync(target, bytes)
   return target
 }
+
+/** A branch name for an output: null unless it is free of shell metacharacters (a fork's branch name is attacker-controlled). */
+export const outName = (r: unknown): string | null =>
+  typeof r === 'string' && /^[A-Za-z0-9._/+@-]+$/.test(r) ? r : null

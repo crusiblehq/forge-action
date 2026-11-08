@@ -100,3 +100,12 @@ it('runners: administration read missing (403) fails closed', async () => {
   expect(r.code).toBe(1)
   expect(r.verdict.verdict).toBe('unreadable')
 })
+
+it('outName: a branch name with shell metacharacters is not returned', async () => {
+  const { outName } = await import('../../src/ops/safe.js')
+  expect(outName('v1-initial')).toBe('v1-initial')
+  expect(outName('a/b.c')).toBe('a/b.c')
+  expect(outName('x$(id)')).toBeNull()
+  expect(outName('a;b')).toBeNull()
+  expect(outName('`id`')).toBeNull()
+})

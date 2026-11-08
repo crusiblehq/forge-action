@@ -34730,6 +34730,8 @@ function writeUnder(dest, rel, bytes) {
     writeFileSync(target, bytes);
     return target;
 }
+/** A branch name for an output: null unless it is free of shell metacharacters (a fork's branch name is attacker-controlled). */
+const outName = (r) => typeof r === 'string' && /^[A-Za-z0-9._/+@-]+$/.test(r) ? r : null;
 
 // Git data reads: commit, tree, blob. Trees and blobs, never a tarball.
 const SHA = /^[0-9a-f]{40}$/;
@@ -34841,9 +34843,9 @@ const pr = (p) => ({
     merged: !!p.merged,
     draft: p.draft,
     head_sha: p.head.sha,
-    head_ref: p.head.ref,
+    head_ref: outName(p.head.ref),
     head_repo: p.head.repo?.full_name ?? null,
-    base_ref: p.base.ref,
+    base_ref: outName(p.base.ref),
     mergeable: p.mergeable ?? null,
     mergeable_state: p.mergeable_state ?? null,
     labels: p.labels.map((l) => l.name)
@@ -34875,7 +34877,7 @@ async function runs(api, i) {
         status: r.status,
         conclusion: r.conclusion,
         head_sha: r.head_sha,
-        head_branch: r.head_branch,
+        head_branch: outName(r.head_branch),
         event: r.event,
         actor: r.actor?.login ?? null,
         created_at: r.created_at
@@ -35055,8 +35057,8 @@ async function readPull(api, i) {
 }
 const facts = (d) => ({
     head_sha: d.head.sha,
-    head_ref: d.head.ref,
-    base_ref: d.base.ref,
+    head_ref: outName(d.head.ref),
+    base_ref: outName(d.base.ref),
     base_sha: d.base.sha,
     head_repo: d.head.repo?.full_name ?? null,
     author_id: d.user?.id ?? null
@@ -35166,7 +35168,7 @@ async function bodyText(api, i) {
     const body = pull.body ?? '';
     writeUnder(i.dest, 'title.txt', Buffer.from(title));
     writeUnder(i.dest, 'body.md', Buffer.from(body));
-    return { verdict: 'ok', title, title_chars: title.length, body_chars: body.length, ok: true };
+    return { verdict: 'ok', title_chars: title.length, body_chars: body.length, ok: true };
 }
 
 // Write ops: status, label, dispatch.

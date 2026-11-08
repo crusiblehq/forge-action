@@ -183,7 +183,9 @@ it('body-text: title and body go to files under dest, never to the verdict, the 
     { pr: '1', sha: H, dest },
     { ...base, [`GET ${P}`]: ok(pull({ body, title: 'feat: t' })) }
   )
-  expect(r.verdict).toEqual({ verdict: 'ok', title: 'feat: t', title_chars: 7, body_chars: body.length, ok: true })
+  expect(r.verdict).toEqual({ verdict: 'ok', title_chars: 7, body_chars: body.length, ok: true })
+  expect(JSON.stringify(r.verdict)).not.toContain('feat: t')
+  expect(r.outputs + r.log).not.toContain('feat: t')
   expect(readFileSync(join(dest, 'body.md'), 'utf8')).toBe(body)
   expect(readFileSync(join(dest, 'title.txt'), 'utf8')).toBe('feat: t')
   expect(r.outputs + r.log).not.toContain('secret-ish')
