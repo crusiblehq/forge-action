@@ -81,6 +81,10 @@ inputs:
     description: Decide and report, but dispatch and label nothing.
     required: false
     default: 'false'
+  event-path:
+    description: Path to a JSON pull_request event to decide on instead of the running event. For tests; the runner does not let a step override GITHUB_EVENT_PATH. Empty = the running event.
+    required: false
+    default: ''
   token:
     description: The job token. Leave the default; a personal access token is unsupported.
     required: false

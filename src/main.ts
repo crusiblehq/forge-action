@@ -1,11 +1,19 @@
+import { readFileSync } from 'node:fs'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 import type { Gh } from './github.js'
 import { PolicyError } from './policy/index.js'
 import { run, summaryRows, type Inputs, type PullRequestPayload } from './run.js'
 
+// Test seam: the runner owns GITHUB_EVENT_PATH, so a self-test names its mocked event here instead.
+function eventPayload(path: string): { pull_request?: unknown } {
+  if (!path) return github.context.payload as { pull_request?: unknown }
+  return JSON.parse(readFileSync(path, 'utf8')) as { pull_request?: unknown }
+}
+
 async function main(): Promise<void> {
-  const pr = github.context.payload.pull_request as PullRequestPayload | undefined
+  const payload = eventPayload(core.getInput('event-path'))
+  const pr = payload.pull_request as PullRequestPayload | undefined
   if (!pr) throw new PolicyError(`needs a pull_request event, got "${github.context.eventName}"`)
   const gh = github.getOctokit(core.getInput('token', { required: true })) as unknown as Gh
   const inputs: Inputs = {

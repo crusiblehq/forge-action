@@ -1,3 +1,4 @@
+import { readFileSync as readFileSync$1 } from 'node:fs';
 import * as os from 'os';
 import os__default, { EOL } from 'os';
 import * as crypto from 'crypto';
@@ -34848,8 +34849,15 @@ function summaryRows(r, prNumber, dryRun) {
     return rows;
 }
 
+// Test seam: the runner owns GITHUB_EVENT_PATH, so a self-test names its mocked event here instead.
+function eventPayload(path) {
+    if (!path)
+        return context.payload;
+    return JSON.parse(readFileSync$1(path, 'utf8'));
+}
 async function main() {
-    const pr = context.payload.pull_request;
+    const payload = eventPayload(getInput('event-path'));
+    const pr = payload.pull_request;
     if (!pr)
         throw new PolicyError(`needs a pull_request event, got "${context.eventName}"`);
     const gh = getOctokit(getInput('token', { required: true }));
