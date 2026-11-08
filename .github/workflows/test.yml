@@ -40,22 +40,30 @@ jobs:
       - name: Write a mocked pull_request event
         run: |
           printf '%s' '{"pull_request":{"number":7,"state":"open","draft":false,"labels":[],"head":{"ref":"feat","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/repo"}},"base":{"repo":{"full_name":"example/repo"}}}}' > "$RUNNER_TEMP/event.json"
-      - name: Run the action with uses ./ on the mocked event
-        id: forge
-        uses: ./
+      - name: Run the built action on the mocked event
+        # Not `uses: ./`: the runner replaces GITHUB_EVENT_PATH with the real event, so a draft pull request read as draft and skipped.
         env:
           GITHUB_EVENT_NAME: pull_request
           GITHUB_EVENT_PATH: ${{ runner.temp }}/event.json
           GITHUB_REPOSITORY: example/repo
-        with:
-          workflow: ci.yml
-          mode: stop
-          dry-run: 'true'
-          token: unused-no-api-call-is-made
-      - name: Assert the outputs, defaults included
-        env:
-          DECISION: ${{ steps.forge.outputs.decision }}
-          MODE: ${{ steps.forge.outputs.mode }}
+          GITHUB_OUTPUT: ${{ runner.temp }}/outputs.txt
+          GITHUB_STEP_SUMMARY: ${{ runner.temp }}/summary.md
+          INPUT_WORKFLOW: ci.yml
+          INPUT_MODE: stop
+          INPUT_DEDUPE: 'true'
+          INPUT_ENABLED-MODES: FULL_AHEAD,HALF_AHEAD,SLOW_AHEAD,DEAD_SLOW,STANDBY,STOP
+          INPUT_ON-COUNT-ERROR: hold
+          INPUT_DISPATCH-INPUTS: '{}'
+          INPUT_PR-INPUT: pr
+          INPUT_FAILFAST-INPUT: failfast
+          INPUT_FAILFAST-MODES: SLOW_AHEAD
+          INPUT_DRY-RUN: 'true'
+          INPUT_TOKEN: unused-no-api-call-is-made
         run: |
-          test "$DECISION" = hold
-          test "$MODE" = STOP
+          : > "$GITHUB_OUTPUT"
+          : > "$GITHUB_STEP_SUMMARY"
+          node dist/index.js
+      - name: Assert the outputs, defaults included
+        run: |
+          grep -A1 '^decision<<' "$RUNNER_TEMP/outputs.txt" | grep -qx hold
+          grep -A1 '^mode<<' "$RUNNER_TEMP/outputs.txt" | grep -qx STOP
