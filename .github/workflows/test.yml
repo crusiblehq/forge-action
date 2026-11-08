@@ -41,13 +41,9 @@ jobs:
         run: |
           printf '%s' '{"pull_request":{"number":7,"state":"open","draft":false,"labels":[],"head":{"ref":"feat","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/repo"}},"base":{"repo":{"full_name":"example/repo"}}}}' > "$RUNNER_TEMP/event.json"
       - name: Run the built action on the mocked event
-        # Not `uses: ./`: the runner replaces GITHUB_EVENT_PATH with the real event, so a draft pull request read as draft and skipped.
+        # Not GITHUB_EVENT_PATH / GITHUB_OUTPUT overrides: the runner owns GITHUB_*. The event comes in by the event-path input; outputs are read from the runner's own "$GITHUB_OUTPUT" in this same step.
         env:
-          GITHUB_EVENT_NAME: pull_request
-          GITHUB_EVENT_PATH: ${{ runner.temp }}/event.json
-          GITHUB_REPOSITORY: example/repo
-          GITHUB_OUTPUT: ${{ runner.temp }}/outputs.txt
-          GITHUB_STEP_SUMMARY: ${{ runner.temp }}/summary.md
+          INPUT_EVENT-PATH: ${{ runner.temp }}/event.json
           INPUT_WORKFLOW: ci.yml
           INPUT_MODE: stop
           INPUT_DEDUPE: 'true'
@@ -60,10 +56,24 @@ jobs:
           INPUT_DRY-RUN: 'true'
           INPUT_TOKEN: unused-no-api-call-is-made
         run: |
-          : > "$GITHUB_OUTPUT"
-          : > "$GITHUB_STEP_SUMMARY"
           node dist/index.js
-      - name: Assert the outputs, defaults included
+          grep -A1 '^decision<<' "$GITHUB_OUTPUT" | grep -qx hold
+          grep -A1 '^mode<<' "$GITHUB_OUTPUT" | grep -qx STOP
+      - name: Run uses ./ on the mocked event (parses action.yml; runs on drafts too)
+        id: forge
+        uses: ./
+        with:
+          event-path: ${{ runner.temp }}/event.json
+          workflow: ci.yml
+          mode: stop
+          dry-run: 'true'
+          token: ${{ github.token }}
+      - name: Assert the uses ./ step outputs
+        env:
+          DECISION: ${{ steps.forge.outputs.decision }}
+          MODE: ${{ steps.forge.outputs.mode }}
+          DISPATCHED: ${{ steps.forge.outputs.dispatched }}
         run: |
-          grep -A1 '^decision<<' "$RUNNER_TEMP/outputs.txt" | grep -qx hold
-          grep -A1 '^mode<<' "$RUNNER_TEMP/outputs.txt" | grep -qx STOP
+          test "$DECISION" = hold
+          test "$MODE" = STOP
+          test "$DISPATCHED" = false
