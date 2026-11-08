@@ -134,7 +134,7 @@ a 422 naming unexpected inputs redispatches once without them). Each sets the ou
 | `held-label`       | empty              | Label added on hold, removed on dispatch. Needs `pull-requests: write`   |
 | `dedupe`           | `true`             | Skip when a dispatched run for this head SHA is queued, running or green |
 | `dry-run`          | `false`            | Decide and report only                                                   |
-| `token`            | required           | Pass `${{ github.token }}` explicitly; there is no default               |
+| `token`            | required           | Pass the workflow GITHUB_TOKEN explicitly; there is no default           |
 
 ## Outputs
 

@@ -144,7 +144,7 @@ inputs:
     required: false
     default: ''
   token:
-    description: The job token, passed explicitly as `${{ github.token }}`. There is no default, so a step never runs on a token it did not name. A personal access token is unsupported.
+    description: The job token, passed explicitly, for example the workflow GITHUB_TOKEN. There is no default, so a step never runs on a token it did not name. A personal access token is unsupported.
     required: true
 
 outputs:
