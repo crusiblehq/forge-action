@@ -33,7 +33,8 @@ const pr = (p: any) => ({
   base_ref: outName(p.base.ref),
   mergeable: p.mergeable ?? null,
   mergeable_state: p.mergeable_state ?? null,
-  labels: p.labels.map((l: { name: string }) => l.name)
+  labels: p.labels.map((l: { name: string }) => l.name),
+  updated_at: p.updated_at ?? null
 })
 
 // `pr` reads one pull request (state, heads, mergeable); otherwise lists by `state` (open) and `base`.
@@ -45,6 +46,13 @@ export async function pulls(api: Api, i: OpInputs) {
   const query = { state: i.state || 'open', ...(i.base ? { base: i.base } : {}) }
   const rows = await pages(api, `/repos/${i.repository}/pulls`, query, null, Number(i['max-pages'] || 5))
   return { verdict: 'ok', pulls: rows.map(pr), ok: true }
+}
+
+// The PR number of a ci.yml dispatch title; the title itself is never emitted (a title is user text).
+const CI_TITLE = /^CI PR #(\d+) @[0-9a-f]{40}$/
+const ciPr = (title: unknown): number | null => {
+  const m = typeof title === 'string' ? CI_TITLE.exec(title) : null
+  return m ? Number(m[1]) : null
 }
 
 export async function runs(api: Api, i: OpInputs) {
@@ -67,7 +75,8 @@ export async function runs(api: Api, i: OpInputs) {
     head_branch: outName(r.head_branch),
     event: r.event,
     actor: r.actor?.login ?? null,
-    created_at: r.created_at
+    created_at: r.created_at,
+    ci_pr: ciPr(r.display_title)
   }))
   return { verdict: 'ok', runs: out, ok: true }
 }

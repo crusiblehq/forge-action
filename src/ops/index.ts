@@ -60,7 +60,12 @@ export const OP_INPUTS = [
   'attempt',
   'lanes',
   'max-runs',
-  'delay-seconds'
+  'delay-seconds',
+  'unknown-wait-seconds',
+  'dirty-reads',
+  'reuse',
+  'files',
+  'rereads'
 ] as const
 
 export interface OpEnv {

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
@@ -47,8 +48,6 @@ it('pr-state: mergeable fails only when all 5 reads conflict', async () => {
   expect(all.calls.filter((c) => c.key === `GET ${P}`)).toHaveLength(5)
   const late = await run({}, { [`GET ${P}`]: [dirty, dirty, ok(pull())] })
   expect(late.verdict).toMatchObject({ verdict: 'ok', reads: 3 })
-  const unknown = await run({}, { [`GET ${P}`]: ok(pull({ mergeable: null, mergeable_state: 'unknown' })) })
-  expect(unknown.verdict.verdict).toBe('ok')
 })
 
 it('pr-state: a head that moves during the mergeable reads is unreadable', async () => {
@@ -290,4 +289,206 @@ it('lane-last-green: stops scanning once every lane is found; bad lanes, max-run
     }
   )
   expect(bad.code).toBe(1)
+})
+
+// --- DX-0055-48: unknown mergeable, dirty-reads, reuse, files, draft ---
+const UNK = ok(pull({ mergeable: null, mergeable_state: 'unknown' }))
+const DIRTY = ok(pull({ mergeable: false, mergeable_state: 'dirty' }))
+const pullReads = (r: { calls: Array<{ key: string }> }) => r.calls.filter((c) => c.key === `GET ${P}`).length
+
+it('pr-state: unknown then clean re-reads once and is ok with no unknown flag', async () => {
+  const r = await run({}, { [`GET ${P}`]: [UNK, ok(pull())] })
+  expect(r.verdict).toMatchObject({ verdict: 'ok', ok: true })
+  expect(r.verdict.unknown).toBeUndefined()
+  expect(pullReads(r)).toBe(2)
+})
+
+it('pr-state: unknown then unknown fails open with unknown: true after exactly 2 pull reads', async () => {
+  const r = await run({}, { [`GET ${P}`]: UNK })
+  expect(r.verdict).toMatchObject({ verdict: 'ok', ok: true, unknown: true, mergeable_state: 'unknown' })
+  expect(pullReads(r)).toBe(2)
+  const nullOnly = await run({}, { [`GET ${P}`]: ok(pull({ mergeable: null, mergeable_state: 'clean' })) })
+  expect(nullOnly.verdict).toMatchObject({ verdict: 'ok', unknown: true })
+  expect(pullReads(nullOnly)).toBe(2)
+})
+
+it('pr-state: unknown then dirty with dirty-reads 1 is conflict', async () => {
+  const r = await run({ 'dirty-reads': '1' }, { [`GET ${P}`]: [UNK, DIRTY] })
+  expect(r.verdict).toMatchObject({ verdict: 'conflict', ok: false, reads: 1 })
+  expect(pullReads(r)).toBe(2)
+})
+
+it('pr-state: unknown then closed is closed; unknown then a moved head is superseded', async () => {
+  const closed = await run({}, { [`GET ${P}`]: [UNK, ok(pull({ state: 'closed' }))] })
+  expect(closed.verdict).toMatchObject({ verdict: 'closed', ok: false })
+  const moved = ok(pull({ head: { ...pull().head, sha: 'a'.repeat(40) } }))
+  const s = await run({}, { [`GET ${P}`]: [UNK, moved] })
+  expect(s.verdict).toMatchObject({ verdict: 'superseded', expected_sha: H, ok: false })
+})
+
+it('pr-state: unknown-wait-seconds defaults to 5-8 s, takes a decimal, 0 waits not at all, above 60 is refused', async () => {
+  const waits: number[] = []
+  for (let n = 0; n < 100; n++) waits.push(...(await run({}, { [`GET ${P}`]: [UNK, ok(pull())] })).sleeps)
+  expect(waits).toHaveLength(100)
+  for (const w of waits) {
+    expect(w).toBeGreaterThanOrEqual(5000)
+    expect(w).toBeLessThan(8000)
+  }
+  expect(new Set(waits).size).toBeGreaterThan(1)
+  const set = async (v: string) => run({ 'unknown-wait-seconds': v }, { [`GET ${P}`]: [UNK, ok(pull())] })
+  expect((await set('0')).sleeps).toEqual([])
+  expect((await set('1.5')).sleeps).toEqual([1500])
+  expect((await set('60')).sleeps).toEqual([60000])
+  expect((await set('61')).log).toMatch(/unknown-wait-seconds above the 60 s cap/)
+  expect((await set('x')).code).toBe(1)
+  expect((await set('-1')).code).toBe(1)
+})
+
+it('pr-state: dirty-reads 1 stops on the first dirty read; the default stays 5; out of range is refused', async () => {
+  const one = await run({ 'dirty-reads': '1' }, { [`GET ${P}`]: DIRTY })
+  expect(one.verdict).toMatchObject({ verdict: 'conflict', reads: 1 })
+  expect(pullReads(one)).toBe(1)
+  const two = await run({ 'dirty-reads': '2' }, { [`GET ${P}`]: DIRTY })
+  expect(two.verdict).toMatchObject({ verdict: 'conflict', reads: 2 })
+  const dflt = await run({}, { [`GET ${P}`]: DIRTY })
+  expect(dflt.verdict).toMatchObject({ verdict: 'conflict', reads: 5 })
+  for (const bad of ['0', '6', 'x']) expect((await run({ 'dirty-reads': bad }, { [`GET ${P}`]: DIRTY })).code).toBe(1)
+})
+
+it('pr-state: reuse false makes no statuses read; files false makes no files read; defaults unchanged', async () => {
+  const off = await run({ reuse: 'false', files: 'false' }, reuse)
+  expect(off.verdict).toMatchObject({ verdict: 'ok', ok: true })
+  expect(off.verdict.files).toBeUndefined()
+  expect(off.calls.filter((c) => c.key.includes('/statuses') || c.key.includes('/files'))).toEqual([])
+  const noReuse = await run({ reuse: 'false', base: 'main' }, reuse)
+  expect(noReuse.verdict.verdict).toBe('ok')
+  expect(noReuse.calls.some((c) => c.key.includes('/files'))).toBe(true)
+  expect(noReuse.calls.some((c) => c.key.includes('/statuses'))).toBe(false)
+  const noFiles = await run({ files: 'false' })
+  expect(noFiles.calls.some((c) => c.key.includes('/statuses'))).toBe(true)
+  expect(noFiles.calls.some((c) => c.key.includes('/files'))).toBe(false)
+  const dflt = await run({ base: 'main' }, reuse)
+  expect(dflt.verdict.verdict).toBe('reused')
+  expect((await run({})).verdict.files).toHaveLength(34)
+  expect((await run({ files: 'true', reuse: 'true' })).verdict.files).toHaveLength(34)
+  expect((await run({ reuse: 'maybe' })).code).toBe(1)
+})
+
+it('pr-state: the output carries draft and mergeable_state', async () => {
+  const r = await run({})
+  expect(r.verdict).toMatchObject({ draft: false, mergeable_state: 'unstable' })
+  const d = await run({}, { [`GET ${P}`]: ok(pull({ draft: true })) })
+  expect(d.verdict).toMatchObject({ verdict: 'ok', draft: true })
+  const c = await run({}, { [`GET ${P}`]: ok(pull({ state: 'closed', draft: true })) })
+  expect(c.verdict).toMatchObject({ verdict: 'closed', draft: true })
+})
+
+// --- dispatch-pin rereads ---
+const withHead = (sha: string, o: object = {}) => ok(pull({ head: { ...pull().head, sha }, ...o }))
+const X = 'a'.repeat(40)
+const Y = 'b'.repeat(40)
+const Z = 'c'.repeat(40)
+const TIP = 'GET /repos/o/r/git/ref/heads/v1-initial'
+const tipAt = (sha: string) => ok({ object: { sha, type: 'commit' } })
+
+it('dispatch-pin rereads 1: a moved head whose tip matches is ok with the new head and moved: true', async () => {
+  const r = await pin({ rereads: '1' }, { [`GET ${P}`]: [withHead(X), withHead(Y)], [TIP]: tipAt(Y) })
+  expect(r.verdict).toMatchObject({ verdict: 'ok', ok: true, head_sha: Y, head_ref: 'v1-initial', moved: true })
+  expect(pullReads(r)).toBe(2)
+})
+
+it('dispatch-pin rereads 1: a second mismatch is moved; draft is not-ready; closed is closed', async () => {
+  const twice = await pin({ rereads: '1' }, { [`GET ${P}`]: [withHead(X), withHead(Y)], [TIP]: tipAt(Z) })
+  expect(twice.verdict).toMatchObject({ verdict: 'moved', ok: false })
+  expect(twice.code).toBe(0)
+  expect(pullReads(twice)).toBe(2)
+  const draft = await pin({ rereads: '1' }, { [`GET ${P}`]: [withHead(X), withHead(Y, { draft: true })] })
+  expect(draft.verdict).toMatchObject({ verdict: 'not-ready', ok: false })
+  const closed = await pin({ rereads: '1' }, { [`GET ${P}`]: [withHead(X), withHead(Y, { state: 'closed' })] })
+  expect(closed.verdict).toMatchObject({ verdict: 'closed', ok: false })
+  const first = await pin({ rereads: '1' }, { [`GET ${P}`]: ok(pull({ state: 'closed' })) })
+  expect(first.verdict).toMatchObject({ verdict: 'closed', ok: false })
+})
+
+it('dispatch-pin rereads 1: a stale tip that catches up on the re-read is ok and not moved', async () => {
+  const r = await pin({ rereads: '1' }, { [TIP]: [tipAt(Y), tipAt(H)] })
+  expect(r.verdict).toMatchObject({ verdict: 'ok', ok: true, head_sha: H, moved: false })
+  expect(pullReads(r)).toBe(2)
+})
+
+it('dispatch-pin rereads 1: a head that matches and a tip that matches never re-reads', async () => {
+  const r = await pin({ rereads: '1' })
+  expect(r.verdict).toMatchObject({ verdict: 'ok', moved: false })
+  expect(pullReads(r)).toBe(1)
+})
+
+it('dispatch-pin rereads 0 (and unset) still throws on a moved head or tip; bad rereads is refused', async () => {
+  for (const rereads of ['0', '']) {
+    const head = await pin({ rereads }, { [`GET ${P}`]: withHead(X) })
+    expect(head.code).toBe(1)
+    expect(head.log).toMatch(/head is a{40}/)
+    expect(pullReads(head)).toBe(1)
+    const tip = await pin({ rereads }, { [TIP]: tipAt(Y) })
+    expect(tip.code).toBe(1)
+    expect(tip.log).toMatch(/tip is b{40}/)
+  }
+  expect((await pin({ rereads: '2' })).log).toMatch(/rereads above 1/)
+  expect((await pin({ rereads: 'x' })).code).toBe(1)
+})
+
+// --- dispatch-pin and dispatch: the ref channel ---
+const VALID = ['fix#12', 'feat(x)', 'a&b', 'x+y@z', 'é-branch', 'a.b/c-d', 'a'.repeat(200), 'release/1.0', 'v1-initial']
+const INVALID = ['..', 'a b', 'a\\b', 'a/', 'a//b', './x', 'a/./b', '/a', 'refs/heads/x', 'a\tb']
+const enc = (name: string) => name.split('/').map(encodeURIComponent).join('/')
+
+it('the ref table: every name git accepts is accepted by git check-ref-format, and the invalid table is not', () => {
+  for (const n of VALID) expect(() => execFileSync('git', ['check-ref-format', '--branch', n])).not.toThrow()
+  for (const n of ['..', 'a b', 'a\\b', 'a/', 'a//b'])
+    expect(() => execFileSync('git', ['check-ref-format', '--branch', n], { stdio: 'ignore' })).toThrow()
+})
+
+it.each(VALID)('dispatch-pin and dispatch carry the valid ref %s byte for byte', async (name) => {
+  const routes = {
+    [`GET ${P}`]: ok(pull({ head: { ...pull().head, ref: name } })),
+    [`GET /repos/o/r/git/ref/heads/${enc(name)}`]: ok({ object: { sha: H, type: 'commit' } }),
+    [`POST /repos/o/r/actions/workflows/ci.yml/dispatches`]: { status: 204 }
+  }
+  const p = await exec('dispatch-pin', { pr: '1', sha: H, ref: name }, routes)
+  expect(p.log).not.toMatch(/::error::/)
+  expect(p.verdict).toMatchObject({ verdict: 'ok', ok: true, head_sha: H })
+  const d = await exec('dispatch', { workflow: 'ci.yml', ref: name, pr: '1', inputs: '{"lane":"ci"}' }, routes)
+  expect(d.code).toBe(0)
+  const post = d.calls.find((c) => c.key.startsWith('POST'))!
+  expect(post.key).toBe('POST /repos/o/r/actions/workflows/ci.yml/dispatches')
+  expect(post.body.ref).toBe(name)
+  expect(post.body.inputs).toEqual({ lane: 'ci', pr: '1' })
+})
+
+it('dispatch-pin: head_ref is null for a name the output sanitiser refuses, and the verdict is still ok', async () => {
+  const name = 'fix#12'
+  const r = await exec(
+    'dispatch-pin',
+    { pr: '1', sha: H, ref: name },
+    {
+      [`GET ${P}`]: ok(pull({ head: { ...pull().head, ref: name } })),
+      [`GET /repos/o/r/git/ref/heads/${enc(name)}`]: ok({ object: { sha: H } })
+    }
+  )
+  expect(r.verdict).toMatchObject({ verdict: 'ok', head_ref: null })
+})
+
+it.each(INVALID)('dispatch-pin refuses the invalid ref %j', async (name) => {
+  const r = await pin({ ref: name })
+  expect(r.code).toBe(1)
+  expect(r.log).toMatch(/ref rejected/)
+})
+
+it('dispatch-pin: a ref that is not the live head ref is refused', async () => {
+  const r = await pin({ ref: 'other/x' }, { 'GET /repos/o/r/git/ref/heads/other/x': tipAt(H) })
+  expect(r.code).toBe(1)
+  expect(r.log).toMatch(/ref differs from the pull request head ref/)
+  expect(r.calls.some((c) => c.key.includes('/git/ref/'))).toBe(false)
+  const near = await pin({ ref: 'V1-initial' })
+  expect(near.log).toMatch(/ref differs from the pull request head ref/)
+  expect((await pin({ ref: 'v1-initial' })).verdict.verdict).toBe('ok')
 })

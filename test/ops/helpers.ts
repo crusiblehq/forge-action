@@ -41,6 +41,7 @@ export async function exec(
   const all: Record<string, string> = { op, token: 'tok_SECRET', ...inputs }
   let log = ''
   const out: Record<string, string> = {}
+  const sleeps: number[] = []
   const code = await execOp({
     get: (n) => all[n] ?? '',
     repository,
@@ -48,9 +49,9 @@ export async function exec(
     output: (n, v) => void (out[n] = String(v)),
     error: (m) => void (log += `::error::${m}\n`),
     log: (l) => void (log += `${l}\n`),
-    sleep: async () => {},
+    sleep: async (ms) => void sleeps.push(ms),
     client: { fetchImpl: f, wait: async () => {}, ...extra }
   })
   const outputs = JSON.stringify(out)
-  return { code, log, calls, verdict: out.verdict ? JSON.parse(out.verdict) : null, outputs, dir }
+  return { code, log, calls, verdict: out.verdict ? JSON.parse(out.verdict) : null, outputs, dir, sleeps, out }
 }

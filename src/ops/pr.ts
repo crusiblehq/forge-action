@@ -6,6 +6,7 @@ import { checkRef, outName, writeUnder } from './safe.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const READS = 5
+const UNKNOWN_WAIT_MAX = 60
 const need = (cond: unknown, msg: string): void => {
   if (!cond) throw new Unreadable(msg)
 }
@@ -17,6 +18,31 @@ const delay = (i: OpInputs) => {
   const s = Number(i['delay-seconds'] || 12)
   need(s <= 60, 'delay-seconds above the 60 s cap')
   return s * 1000
+}
+/** unknown-wait-seconds: a decimal up to 60; empty means 5 s plus up to 3 s of jitter, and 0 waits not at all. */
+const unknownWaitMs = (i: OpInputs) => {
+  const raw = i['unknown-wait-seconds'] ?? ''
+  if (raw === '') return (5 + Math.random() * 3) * 1000
+  need(/^\d+(\.\d+)?$/.test(raw), `bad unknown-wait-seconds: ${JSON.stringify(raw)}`)
+  const s = Number(raw)
+  need(s <= UNKNOWN_WAIT_MAX, `unknown-wait-seconds above the ${UNKNOWN_WAIT_MAX} s cap`)
+  return s * 1000
+}
+/** A digits-only integer input within [min, max]; empty is the default. */
+const intInput = (i: OpInputs, name: string, dflt: number, min: number, max: number) => {
+  const raw = i[name] ?? ''
+  if (raw === '') return dflt
+  const n = Number(raw)
+  need(Number.isInteger(n) && n >= min, `${name} below ${min}`)
+  need(n <= max, `${name} above ${max}`)
+  return n
+}
+/** A true/false input; empty is the default. */
+const boolInput = (i: OpInputs, name: string, dflt: boolean) => {
+  const raw = i[name] ?? ''
+  if (raw === '') return dflt
+  need(raw === 'true' || raw === 'false', `bad ${name}: ${JSON.stringify(raw)}`)
+  return raw === 'true'
 }
 async function readPull(api: Api, i: OpInputs) {
   const d = await api.read(`/repos/${i.repository}/pulls/${i.pr}`)
@@ -33,6 +59,8 @@ const facts = (d: any) => ({
 })
 // REST spells the guard's CONFLICTING/DIRTY as mergeable=false / mergeable_state=dirty; null is still being computed.
 const conflicting = (d: any) => d.mergeable === false || d.mergeable_state === 'dirty'
+// null / 'unknown' is GitHub still computing mergeability after a push.
+const unknownState = (d: any) => d.mergeable === null || d.mergeable_state === 'unknown'
 
 /** Newest ci-required status at the sha, scanning pages until it is found; a full last page with none is unreadable. */
 async function ciRequired(api: Api, repo: string, sha: string) {
@@ -67,14 +95,20 @@ async function reusedRun(api: Api, i: OpInputs): Promise<number | null> {
 }
 
 // Verdict ok|closed|superseded|reused|conflict; any unread state throws (unreadable). sha is the head the caller tests.
+// A read still computing mergeability (unknown) waits unknown-wait-seconds and re-reads once; a second unknown is ok with unknown: true.
 export async function prState(api: Api, i: OpInputs, d: OpDeps) {
   needPr(i, 'pr-state')
   const wait = delay(i)
+  const dirtyReads = intInput(i, 'dirty-reads', READS, 1, READS)
+  const reuse = boolInput(i, 'reuse', true)
+  const withFiles = boolInput(i, 'files', true)
   let pull = await readPull(api, i)
   const out = (verdict: string, extra: object = {}) => ({
     verdict,
     pr: Number(i.pr),
     state: pull.merged ? 'merged' : pull.state,
+    draft: !!pull.draft,
+    mergeable_state: pull.mergeable_state ?? null,
     ...facts(pull),
     ...extra,
     ok: verdict === 'ok'
@@ -86,22 +120,34 @@ export async function prState(api: Api, i: OpInputs, d: OpDeps) {
     if (pull.state !== 'open') return out('closed')
     if (pull.head.sha !== i.sha) return out('superseded', { expected_sha: i.sha })
   }
-  const reused = await reusedRun(api, i)
+  const reused = reuse ? await reusedRun(api, i) : null
   // a verdict answers for the base it was cut against: a retargeted pull request does not reuse it
   if (reused && (!i.base || i.base === pull.base.ref)) return out('reused', { run: reused })
   let reads = 0
+  let rechecked = false
   for (;;) {
     reads++
+    if (!rechecked && unknownState(pull)) {
+      rechecked = true
+      const w = unknownWaitMs(i)
+      if (w > 0) await d.sleep(w)
+      pull = await readPull(api, i)
+      if (pull.state !== 'open') return out('closed')
+      if (pull.head.sha !== i.sha) return out('superseded', { expected_sha: i.sha })
+    }
     if (!conflicting(pull)) break
-    if (reads >= READS) return out('conflict', { reads })
+    if (reads >= dirtyReads) return out('conflict', { reads })
     await d.sleep(wait)
     pull = await readPull(api, i)
     need(pull.head.sha === i.sha, `head moved to ${pull.head.sha} during the mergeable reads`)
   }
+  const unknown = unknownState(pull) ? { unknown: true } : {}
+  if (!withFiles) return out('ok', { reads, ...unknown })
   const files = await pages(api, `/repos/${i.repository}/pulls/${i.pr}/files`, {}, null, 30)
   need(files.length === pull.changed_files, `changed files read ${files.length} of ${pull.changed_files}`)
   return out('ok', {
     reads,
+    ...unknown,
     files: files.map((f) => ({
       path: f.filename,
       status: f.status,
@@ -111,17 +157,40 @@ export async function prState(api: Api, i: OpInputs, d: OpDeps) {
 }
 
 // The dispatch target's tip must be the sha the pass listed, which must be the pull request's head.
+// rereads 1: on a head or tip mismatch re-read the pull request once, with no wait; verdict ok (moved: true when the head
+// changed), moved (a second mismatch), closed or not-ready. rereads 0 (default) throws on the first mismatch.
+// A non-empty ref must equal the live head ref, so the dispatched ref is the pull request's own and passes no sanitiser.
 export async function dispatchPin(api: Api, i: OpInputs) {
   needPr(i, 'dispatch-pin')
-  const pull = await readPull(api, i)
-  need(pull.state === 'open', `pull request #${i.pr} is ${pull.state}`)
-  need(pull.head.sha === i.sha, `pull request #${i.pr} head is ${pull.head.sha}, the pass listed ${i.sha}`)
-  const ref = checkRef(i.ref || pull.head.ref)
-  const name = /^heads\//.test(ref) ? ref : `heads/${ref}`
-  const tip = await api.read(`/repos/${i.repository}/git/ref/${name.split('/').map(encodeURIComponent).join('/')}`)
-  need(tip, `dispatch target ${name} does not exist in ${i.repository}`)
-  need(tip.object.sha === i.sha, `dispatch target ${name} tip is ${tip.object.sha}, the pass listed ${i.sha}`)
-  return { verdict: 'ok', ...facts(pull), ok: true }
+  const rereads = intInput(i, 'rereads', 0, 0, 1)
+  if (i.ref) checkRef(i.ref)
+  let pull = await readPull(api, i)
+  const res = (verdict: string, extra: object = {}) => ({ verdict, ...facts(pull), ...extra, ok: verdict === 'ok' })
+  for (let attempt = 0; ; attempt++) {
+    if (pull.state !== 'open') {
+      need(rereads, `pull request #${i.pr} is ${pull.state}`)
+      return res('closed')
+    }
+    if (attempt > 0 && pull.draft) return res('not-ready')
+    if (i.ref) need(i.ref === pull.head.ref, 'ref differs from the pull request head ref')
+    let why: string | null = null
+    if (attempt === 0 && pull.head.sha !== i.sha) {
+      why = `pull request #${i.pr} head is ${pull.head.sha}, the pass listed ${i.sha}`
+    } else {
+      const ref = checkRef(i.ref || pull.head.ref)
+      const name = /^heads\//.test(ref) ? ref : `heads/${ref}`
+      const tip = await api.read(`/repos/${i.repository}/git/ref/${name.split('/').map(encodeURIComponent).join('/')}`)
+      need(tip, `dispatch target ${name} does not exist in ${i.repository}`)
+      if (tip.object.sha !== pull.head.sha)
+        why = `dispatch target ${name} tip is ${tip.object.sha}, the pass listed ${pull.head.sha}`
+    }
+    if (!why) return res('ok', rereads ? { moved: pull.head.sha !== i.sha } : {})
+    if (attempt >= rereads) {
+      need(rereads, why)
+      return res('moved')
+    }
+    pull = await readPull(api, i)
+  }
 }
 
 // Live title and body. The body is attacker-controlled text: it goes to files under dest, never to an output or a log.
