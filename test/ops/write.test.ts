@@ -147,3 +147,60 @@ it('missing token and unknown op fail closed', async () => {
   expect(r.code).toBe(1)
   expect(r.log).toMatch(/unknown op/)
 })
+
+// --- execOp: the verdict a failed write leaves behind (DX-0055-48 tests 11 to 11c) ---
+const DISPATCH = 'POST /repos/o/r/actions/workflows/ci.yml/dispatches'
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const post = (r: { calls: Array<{ key: string; body?: any }> }, key: string) => r.calls.filter((c) => c.key === key)
+const D = { workflow: 'ci.yml', ref: 'feat-x', pr: '7', inputs: '{"lane":"ci"}' }
+const UNEXPECTED = { message: 'Unexpected inputs provided: ["pr"]' }
+
+it('dispatch with retry-unknown-inputs false: a 422 Unexpected inputs fails with an unreadable verdict and one POST', async () => {
+  const r = await exec(
+    'dispatch',
+    { ...D, 'retry-unknown-inputs': 'false' },
+    { [DISPATCH]: { status: 422, body: UNEXPECTED } }
+  )
+  expect(r.code).toBe(1)
+  expect(r.out.ok).toBe('false')
+  expect(r.verdict.verdict).toBe('unreadable')
+  expect(r.verdict.why).toContain('Unexpected inputs')
+  expect(r.verdict.why.length).toBeLessThanOrEqual(200)
+  expect(post(r, DISPATCH)).toHaveLength(1)
+  expect(post(r, DISPATCH)[0]!.body.inputs).toEqual({ lane: 'ci', pr: '7' })
+})
+
+it('dispatch with the default retry: the same 422 then 204 succeeds with dropped pr, a warning and two POSTs', async () => {
+  const r = await exec('dispatch', D, { [DISPATCH]: [{ status: 422, body: UNEXPECTED }, { status: 204 }] })
+  expect(r.code).toBe(0)
+  expect(r.out.ok).toBe('true')
+  expect(r.verdict).toMatchObject({ verdict: 'ok', dropped: ['pr'], ok: true })
+  expect(r.log).toMatch(/::warning::dispatch retried once without unknown inputs: pr/)
+  expect(post(r, DISPATCH)).toHaveLength(2)
+  expect(post(r, DISPATCH)[1]!.body.inputs).toEqual({ lane: 'ci' })
+})
+
+it('dispatch: any other non-204 (HTTP 404) fails with a why that starts dispatch: HTTP 404', async () => {
+  const r = await exec('dispatch', D, { [DISPATCH]: { status: 404, body: { message: 'Not Found' } } })
+  expect(r.code).toBe(1)
+  expect(r.out.ok).toBe('false')
+  expect(r.verdict.verdict).toBe('unreadable')
+  expect(r.verdict.why).toMatch(/^dispatch: HTTP 404/)
+  expect(post(r, DISPATCH)).toHaveLength(1)
+})
+
+it('status through execOp: 201 is ok with one POST; a non-201 fails with why status POST: HTTP 422 and no retry', async () => {
+  const key = `POST /repos/o/r/statuses/${S}`
+  const inputs = { sha: S, context: 'ci-required', state: 'failure', description: 'Stale branch' }
+  const good = await exec('status', inputs, { [key]: { status: 201, body: {} } })
+  expect(good.code).toBe(0)
+  expect(good.out.ok).toBe('true')
+  expect(good.verdict).toMatchObject({ verdict: 'ok', state: 'failure', ok: true })
+  expect(post(good, key)).toHaveLength(1)
+  const bad = await exec('status', inputs, { [key]: { status: 422, body: { message: 'Validation Failed' } } })
+  expect(bad.code).toBe(1)
+  expect(bad.out.ok).toBe('false')
+  expect(bad.verdict.verdict).toBe('unreadable')
+  expect(bad.verdict.why).toMatch(/^status POST: HTTP 422/)
+  expect(post(bad, key)).toHaveLength(1)
+})

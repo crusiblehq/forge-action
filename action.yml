@@ -108,6 +108,26 @@ inputs:
     description: op pr-state. Pause between the head and mergeable re-reads, at most 60. Default 12.
     required: false
     default: ''
+  unknown-wait-seconds:
+    description: op pr-state. Wait before the single re-read of a pull request whose mergeability is still unknown (mergeable null or state unknown), a decimal up to 60. Default 5 plus up to 3 seconds. 0 re-reads at once.
+    required: false
+    default: ''
+  dirty-reads:
+    description: op pr-state. Reads before a dirty pull request is a conflict, 1 to 5. Default 5.
+    required: false
+    default: ''
+  reuse:
+    description: op pr-state. true (default) returns reused when a green ci-required from a ci.yml dispatch exists at the sha. false skips that check and its status reads.
+    required: false
+    default: ''
+  files:
+    description: op pr-state. true (default) lists the changed files and checks the count. false skips the list.
+    required: false
+    default: ''
+  rereads:
+    description: op dispatch-pin. 0 (default) fails on a moved head or tip. 1 re-reads the pull request once and returns ok (moved true), moved, closed or not-ready.
+    required: false
+    default: ''
   max-pages:
     description: op pulls list, runs, runners. Fail when more than this many pages of 100.
     required: false

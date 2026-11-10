@@ -57,6 +57,7 @@ it('runs: filters by sha and reduces the recorded response', async () => {
   expect(Object.keys(r.verdict.runs[0]).sort()).toEqual([
     'actor',
     'attempt',
+    'ci_pr',
     'conclusion',
     'created_at',
     'event',
@@ -108,4 +109,48 @@ it('outName: a branch name with shell metacharacters is not returned', async () 
   expect(outName('x$(id)')).toBeNull()
   expect(outName('a;b')).toBeNull()
   expect(outName('`id`')).toBeNull()
+})
+
+it('pulls: carries updated_at, one pull request and the list', async () => {
+  const one = await exec(
+    'pulls',
+    { pr: '1' },
+    { 'GET /repos/o/r/pulls/1': { status: 200, body: fixture('pull-1.json') } }
+  )
+  expect(one.verdict.pull.updated_at).toBe('2026-11-05T01:31:05Z')
+  const l = await exec(
+    'pulls',
+    {},
+    { 'GET /repos/o/r/pulls?state=open&per_page=100&page=1': { status: 200, body: fixture('pulls-open.json') } }
+  )
+  expect(l.verdict.pulls.every((p: { updated_at: unknown }) => typeof p.updated_at === 'string')).toBe(true)
+  const none = fixture('pull-1.json')
+  delete none.updated_at
+  const gone = await exec('pulls', { pr: '1' }, { 'GET /repos/o/r/pulls/1': { status: 200, body: none } })
+  expect(gone.verdict.pull.updated_at).toBeNull()
+})
+
+it('runs: ci_pr is parsed from a CI PR title, null otherwise, and the title is never emitted', async () => {
+  const SHA = 'f'.repeat(40)
+  const rows = [
+    { ...fixture('runs.json').workflow_runs[0], id: 1, display_title: `CI PR #5 @${SHA}` },
+    { ...fixture('runs.json').workflow_runs[0], id: 2, display_title: `CI PR #5 @${SHA.slice(1)}` },
+    { ...fixture('runs.json').workflow_runs[0], id: 3, display_title: `feat: CI PR #5 @${SHA}` },
+    { ...fixture('runs.json').workflow_runs[0], id: 4, display_title: `CI PR #5 @${SHA} extra` },
+    { ...fixture('runs.json').workflow_runs[0], id: 5, display_title: `CI PR #12345 @${SHA}` },
+    { ...fixture('runs.json').workflow_runs[0], id: 6, display_title: 'CI PR #x @' + SHA },
+    { ...fixture('runs.json').workflow_runs[0], id: 7, display_title: null }
+  ]
+  const r = await exec(
+    'runs',
+    { workflow: 'ci.yml' },
+    {
+      'GET /repos/o/r/actions/workflows/ci.yml/runs?per_page=100&page=1': { status: 200, body: { workflow_runs: rows } }
+    }
+  )
+  expect(r.code).toBe(0)
+  expect(r.verdict.runs.map((x: { ci_pr: number | null }) => x.ci_pr)).toEqual([5, null, null, null, 12345, null, null])
+  for (const x of r.verdict.runs) expect(Object.keys(x)).not.toContain('display_title')
+  expect(r.outputs).not.toContain('CI PR')
+  expect(r.log).not.toContain('CI PR')
 })
